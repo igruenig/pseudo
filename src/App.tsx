@@ -4,14 +4,26 @@ import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
 import { buildInlineSegments } from "./lib/core/inlineSegments";
 import { stringIndexToByteOffset } from "./lib/core/offsets";
-import { readinessLabel } from "./lib/core/state";
 import type { AnalysisResult, AnalysisStateName, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType } from "./lib/core/types";
 import "./styles.css";
 
 const MANUAL_TYPES: SensitiveType[] = ["PERSON_NAME", "ORGANIZATION", "LOCATION", "OTHER_SENSITIVE"];
+const TYPE_LABELS: Record<SensitiveType, string> = {
+  PERSON_NAME: "Person",
+  ORGANIZATION: "Organization",
+  ROLE_OR_POSITION: "Role",
+  LOCATION: "Location",
+  EMAIL: "Email",
+  PHONE: "Phone",
+  DATE: "Date",
+  ID_NUMBER: "ID",
+  URL: "URL",
+  OTHER_SENSITIVE: "Sensitive"
+};
 type FloatingPoint = { top: number; left: number };
 type ManualSelection = FloatingPoint & { start: number; end: number };
 const SELECTION_TOOLBAR_WIDTH = 236;
+const SELECTION_TOOLBAR_HEIGHT = 44;
 const VIEWPORT_MARGIN = 12;
 
 export default function App() {
@@ -28,6 +40,7 @@ export default function App() {
   const [manualSelection, setManualSelection] = useState<ManualSelection | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const documentRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLElement | null>(null);
 
   const state: AnalysisStateName = useMemo(() => {
     if (busy) return "ANALYZING";
@@ -38,8 +51,10 @@ export default function App() {
   }, [analyzedText, busy, error, result, text]);
 
   const inlineSegments = useMemo(() => buildInlineSegments(text, result, groups), [groups, result, text]);
-  const readiness = readinessLabel(state, result, groups);
-  const showModelStrip = !downloadStatus || downloadStatus.state !== "complete";
+  const headerStatus = statusLabel(state, result, groups);
+  const modelLabel = !downloadStatus || downloadStatus.state === "complete"
+    ? formatModelStatus(modelStatus, downloadStatus)
+    : formatDownloadStatus(downloadStatus);
 
   useEffect(() => {
     void refreshModel();
@@ -208,10 +223,17 @@ export default function App() {
 
     const rect = range.getBoundingClientRect();
     const toolbarHalfWidth = SELECTION_TOOLBAR_WIDTH / 2;
+    const headerBottom = toolbarRef.current?.getBoundingClientRect().bottom ?? 0;
+    const minTop = headerBottom + VIEWPORT_MARGIN;
+    const topAbove = rect.top - SELECTION_TOOLBAR_HEIGHT - 8;
+    const topBelow = rect.bottom + 8;
+    const top = topAbove >= minTop
+      ? topAbove
+      : Math.min(window.innerHeight - SELECTION_TOOLBAR_HEIGHT - VIEWPORT_MARGIN, Math.max(minTop, topBelow));
     setManualSelection({
       start: Math.min(start, end),
       end: Math.max(start, end),
-      top: Math.max(VIEWPORT_MARGIN, rect.top - 46),
+      top,
       left: Math.min(
         window.innerWidth - toolbarHalfWidth - VIEWPORT_MARGIN,
         Math.max(toolbarHalfWidth + VIEWPORT_MARGIN, rect.left + rect.width / 2)
@@ -263,30 +285,28 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="toolbar">
+      <header className="toolbar" ref={toolbarRef}>
         <div>
           <h1>Pseudo</h1>
-          <p>{readiness}</p>
+          <p>{headerStatus}</p>
         </div>
-        <div className="toolbar-actions">
-          {state === "ANALYZED_READY" ? <button onClick={handleEditText}>Edit text</button> : null}
-          <button onClick={handleAnalyze} disabled={state !== "DIRTY_NEEDS_ANALYSIS"}>Analyze</button>
-          <button onClick={handleClear} disabled={state === "EMPTY"}>Clear</button>
-          <button className="primary" onClick={handleCopy} disabled={state !== "ANALYZED_READY"}>Copy result</button>
+        <div className="toolbar-right">
+          <div className="model-status">
+            <span>{modelLabel}</span>
+            {downloadStatus?.state === "downloading" ? (
+              <button onClick={handleCancelDownload}>Cancel</button>
+            ) : !modelStatus.loaded && downloadStatus?.state !== "complete" ? (
+              <button onClick={handleDownloadModel}>Download model</button>
+            ) : null}
+          </div>
+          <div className="toolbar-actions">
+            {state === "ANALYZED_READY" ? <button onClick={handleEditText}>Edit text</button> : null}
+            <button className={state === "DIRTY_NEEDS_ANALYSIS" ? "primary" : ""} onClick={handleAnalyze} disabled={state !== "DIRTY_NEEDS_ANALYSIS"}>Analyze</button>
+            <button onClick={handleClear} disabled={state === "EMPTY"}>Clear</button>
+            <button className={state === "ANALYZED_READY" ? "primary" : ""} onClick={handleCopy} disabled={state !== "ANALYZED_READY"}>Copy result</button>
+          </div>
         </div>
       </header>
-
-      {showModelStrip ? (
-        <section className="model-strip">
-          <span>{formatModelStatus(modelStatus, downloadStatus)}</span>
-          <span>{downloadStatus ? formatDownloadStatus(downloadStatus) : "Checking model..."}</span>
-          {downloadStatus?.state === "downloading" ? (
-            <button onClick={handleCancelDownload}>Cancel</button>
-          ) : !modelStatus.loaded && downloadStatus?.state !== "complete" ? (
-            <button onClick={handleDownloadModel}>Download model</button>
-          ) : null}
-        </section>
-      ) : null}
 
       {error ? <div className="error">{error}</div> : null}
       {copied ? <div className="toast">Pseudonymized text copied</div> : null}
@@ -327,6 +347,8 @@ export default function App() {
                     toggleGroup(segment.group.id);
                     setManualSelection(null);
                   }}
+                  aria-pressed={segment.group.enabled}
+                  aria-label={`${segment.group.enabled ? "Keep original" : "Replace"} ${segment.originalText}`}
                   title={`${segment.originalText} · ${segment.finding.type} · click to ${segment.group.enabled ? "keep original" : "replace"}`}
                   type="button"
                 >
@@ -353,11 +375,24 @@ export default function App() {
           style={{ top: manualSelection.top, left: manualSelection.left }}
         >
           <select value={manualType} onChange={(event) => setManualType(event.target.value as SensitiveType)}>
-            {MANUAL_TYPES.map((type) => <option key={type}>{type}</option>)}
+            {MANUAL_TYPES.map((type) => <option key={type} value={type}>{TYPE_LABELS[type]}</option>)}
           </select>
           <button onClick={markSelection}>Mark</button>
         </div>
       ) : null}
     </main>
   );
+}
+
+function statusLabel(state: AnalysisStateName, result: AnalysisResult | null, groups: ReplacementGroup[]): string {
+  if (state === "EMPTY") return "Paste text";
+  if (state === "DIRTY_NEEDS_ANALYSIS") return "Needs analysis";
+  if (state === "ANALYZING") return "Analyzing";
+  if (state === "ERROR") return "Error";
+  if (!result || result.findings.length === 0) return "No findings";
+
+  const needsReview = result.findings.filter((finding) => finding.needsReview).length;
+  const enabledCount = groups.filter((group) => group.enabled).length;
+  if (needsReview > 0) return `Review recommended · ${needsReview}`;
+  return `Ready · ${enabledCount} replacements`;
 }

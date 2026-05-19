@@ -38,6 +38,21 @@ button {
   cursor: pointer;
 }
 
+button:hover:not(:disabled) {
+  background: #f7f2e8;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #6f9589;
+  outline-offset: 2px;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -47,6 +62,10 @@ button.primary {
   background: #214d43;
   color: #fff;
   border-color: #214d43;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #183c34;
 }
 
 .app-shell {
@@ -77,19 +96,26 @@ button.primary {
   font-size: 14px;
 }
 
+.toolbar-right,
 .toolbar-actions,
-.model-strip {
+.model-status {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.model-strip {
-  min-height: 42px;
-  padding: 0 22px;
-  border-bottom: 1px solid #dfd9ce;
+.toolbar-right {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.model-status {
   color: #5d5a51;
   font-size: 13px;
+}
+
+.model-status button {
+  height: 30px;
 }
 
 .document-shell {
@@ -152,13 +178,14 @@ button.primary {
   color: #173d34;
 }
 
+.entity-chip:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
 .entity-chip.disabled {
   border-color: #d4cbbb;
   background: #fffaf1;
   color: #6c6252;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
 }
 
 .entity-chip.needs-review {
@@ -218,6 +245,10 @@ button.primary {
   color: #fff;
 }
 
+.error {
+  bottom: 66px;
+}
+
 @media (max-width: 760px) {
   .toolbar {
     align-items: flex-start;
@@ -229,14 +260,17 @@ button.primary {
     width: 100%;
   }
 
-  .toolbar-actions button {
-    flex: 1;
+  .toolbar-right {
+    width: 100%;
+    justify-content: flex-start;
   }
 
-  .model-strip {
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 10px 14px;
+  .model-status {
+    width: 100%;
+  }
+
+  .toolbar-actions button {
+    flex: 1;
   }
 
   .document-shell textarea,
