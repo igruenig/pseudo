@@ -65,17 +65,21 @@ The UI should expose the type labels in human-friendly form, but the internal re
 
 ### Local Model Runtime
 
-The user expects a local Qwen 1.7B model available through Hugging Face. The plan should support two runtime paths:
+The first commercial demo should ship as a small desktop app and download the local model after install. The plan should support three runtime/setup paths:
 
-1. Primary MVP path: sidecar Python service using `transformers`
+1. Primary MVP path: app-managed local model download plus sidecar Python service using `transformers`
+   - Keeps the installer small
+   - Lets the first-run UI explain that analysis remains local after setup
+   - Supports progress, pause/resume, checksum validation, and clear setup errors
+2. Developer/manual path: sidecar Python service using `transformers` with an existing local model path
    - Easiest path to Hugging Face model loading
    - Can use local cache without network
    - Keeps Rust/Tauri integration simple through localhost HTTP or stdio
-2. Later native path: Rust-side inference via `candle`, `llama.cpp`, or ONNX
+3. Later native path: Rust-side inference via `candle`, `llama.cpp`, or ONNX
    - Better packaging story
    - Lower operational complexity after model format is settled
 
-For the first build, use the Python sidecar because it reduces risk and gives faster iteration on prompts and parsing.
+For the first build, use the Python sidecar because it reduces risk and gives faster iteration on prompts and parsing. Before public/commercial distribution, verify the model license allows the intended packaging, download flow, and commercial use.
 
 ## 5. High-Level Architecture
 
@@ -161,7 +165,7 @@ type AnalysisResult = {
 };
 ```
 
-`pseudonymizedText` is a derived value produced from the current text and enabled replacement groups. The backend may return the first generated preview, but the frontend should also recompute it whenever the user edits a replacement, disables a group, or re-enables a group.
+`pseudonymizedText` is a derived value produced from the current text and enabled replacement groups. The Rust backend should be the canonical owner of validation, grouping, overlap resolution, and range-based replacement. The frontend may recompute an optimistic live preview for responsiveness, but final copy/export actions should use backend-confirmed output.
 
 ## 7. Detection Strategy
 
@@ -296,9 +300,15 @@ The numbering should be stable per analysis result and per type.
 
 ### Applying Replacements
 
-Apply replacements automatically after every completed analysis and after every user edit to the replacement map. Apply by sorted character ranges, from end to start, not by naive global string replacement. This prevents accidental changes to text outside confirmed spans and preserves offsets during replacement.
+Apply replacements automatically after every completed analysis and after every user edit to the replacement map. The canonical implementation should live in Rust and apply by sorted character ranges, from end to start, not by naive global string replacement. This prevents accidental changes to text outside confirmed spans and preserves offsets during replacement.
+
+The frontend may run the same deterministic algorithm for immediate preview updates, but the backend remains the source of truth. Before copying or exporting, ask the backend to recompute the pseudonymized result from the current source text and replacement groups.
 
 Provide an optional later feature: "replace all exact matches" for user-approved recurring text missed by the model.
+
+### Manual Marking
+
+Manual user markings are first-class findings. In the MVP, the user should be able to select text in the editor, choose `Mark sensitive`, pick a sensitive type, and create a validated finding from the exact selected range. The manual finding should flow through the same grouping, replacement, highlighting, and range-based replacement logic as deterministic and LLM findings.
 
 ## 9. Frontend Layout
 
@@ -349,18 +359,40 @@ Initial command surface:
 async fn analyze_text(text: String) -> Result<AnalysisResult, AppError>;
 
 #[tauri::command]
+async fn apply_replacements(text: String, groups: Vec<ReplacementGroup>) -> Result<String, AppError>;
+
+#[tauri::command]
+async fn create_manual_finding(text: String, start: usize, end: usize, type_: SensitiveType) -> Result<Finding, AppError>;
+
+#[tauri::command]
+async fn recompute_analysis(text: String, findings: Vec<Finding>, groups: Vec<ReplacementGroup>) -> Result<AnalysisResult, AppError>;
+
+#[tauri::command]
 async fn get_model_status() -> Result<ModelStatus, AppError>;
+
+#[tauri::command]
+async fn get_model_download_status() -> Result<ModelDownloadStatus, AppError>;
+
+#[tauri::command]
+async fn start_model_download() -> Result<ModelDownloadStatus, AppError>;
+
+#[tauri::command]
+async fn pause_model_download() -> Result<ModelDownloadStatus, AppError>;
 
 #[tauri::command]
 async fn start_model_service() -> Result<ModelStatus, AppError>;
 
 #[tauri::command]
 async fn stop_model_service() -> Result<(), AppError>;
+
+#[tauri::command]
+async fn get_license_status() -> Result<LicenseStatus, AppError>;
+
+#[tauri::command]
+async fn activate_license(license_key: String) -> Result<LicenseStatus, AppError>;
 ```
 
-Replacement application can live in the frontend initially because it is deterministic and easy to test. Move it to Rust later if shared validation or export features require it.
-
-The frontend should call `analyze_text`, receive findings and replacement groups, generate the initial pseudonymized preview immediately, and then keep that preview in sync with replacement edits.
+The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings and groups. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result.
 
 ## 11. Python Sidecar Service
 
@@ -411,23 +443,59 @@ The service should first try:
 
 1. Explicit app config path
 2. `PSEUDO_MODEL_PATH`
-3. Hugging Face cache lookup for likely Qwen 1.7B model names
-4. Manual setup error with clear UI message
+3. App-managed model directory
+4. Hugging Face cache lookup for likely Qwen 1.7B model names
+5. First-run model download prompt with clear size, privacy, and license notes
+6. Manual setup error with clear UI message
 
-Do not download models automatically in the first version. The user expects the model to already exist locally.
+Do not silently download models. The first-run experience should offer a guided download, show progress, validate the downloaded files, and then run analysis fully locally. The app should remember the installed model path and support replacing or deleting the local model from settings.
 
-## 12. Privacy and Security Requirements
+### Model Download Manager
+
+For the lawyer-facing demo and future sales flow, keep the app installer small and download the model after install:
+
+- show a first-run setup screen when no usable model is found
+- explain that the model is downloaded once and future document analysis stays local
+- show model name, approximate size, destination folder, and expected disk requirement
+- support resume after interruption where the hosting source supports it
+- validate the model with a checksum or manifest before use
+- store the model under an app-managed data directory by default
+- allow advanced users to choose an existing local model path
+- avoid sending pasted/user text during setup, activation, or update checks
+- verify commercial redistribution and hosted-download rights for the selected model before distributing outside private demos
+
+## 12. Commercial Demo, Trial, and Free Version
+
+The sales/demo experience should optimize for trust: install quickly, make setup understandable, and avoid sending client text anywhere.
+
+Recommended packaging:
+
+- Small installer that includes the app shell, deterministic detectors, manual marking, and model download manager.
+- First-run guided setup that downloads the local model only after explicit user approval.
+- Full local processing after the model is installed.
+- Clear status: `Deterministic only`, `Downloading model`, `Local model ready`, `Trial expired`, or `Licensed`.
+
+Recommended trial/free strategy:
+
+- Free version: deterministic detectors, manual marking, replacement review, and copy/export for short text. This is useful forever and demonstrates privacy even without the model.
+- Trial version: time-limited full LLM-assisted experience, such as 14 days, with no document upload and no watermark in copied text. This is best for a lawyer evaluating real workflows.
+- Paid version: unlimited local LLM-assisted analysis, commercial support, model/settings management, and later document-format support.
+
+Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never pasted text, extracted findings, replacement maps, or pseudonymized results. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
+
+## 13. Privacy and Security Requirements
 
 - All analysis must run locally.
 - No analytics or telemetry in MVP.
 - Do not persist pasted text unless the user explicitly saves a project later.
 - Do not log user text in Rust, Python, or frontend console.
+- Do not send pasted text, findings, replacement maps, or pseudonymized output during license activation, model download, or update checks.
 - Sidecar service should bind only to `127.0.0.1`.
 - Use a random local port or authenticated local token if the sidecar exposes HTTP.
 - Clear in-memory state when the user clicks `Clear`.
 - Document that the app assists pseudonymization but does not guarantee legal anonymization.
 
-## 13. Project Structure
+## 14. Project Structure
 
 Recommended initial structure:
 
@@ -441,7 +509,9 @@ pseudo/
     App.tsx
     components/
       EditorPane.tsx
+      FirstRunSetup.tsx
       ReplacementPanel.tsx
+      SettingsPanel.tsx
       Toolbar.tsx
       HighlightedText.tsx
     lib/
@@ -455,6 +525,8 @@ pseudo/
     src/
       main.rs
       analysis.rs
+      license.rs
+      model_download.rs
       model_service.rs
       rules.rs
   sidecar/
@@ -466,7 +538,7 @@ pseudo/
 
 This repository currently contains the plan at the root. Once the app scaffold exists, move or copy this document to `docs/implementation-plan.md`.
 
-## 14. Testing Plan
+## 15. Testing Plan
 
 ### Unit Tests
 
@@ -475,16 +547,20 @@ Frontend:
 - text chunking preserves offsets
 - grouping repeated findings
 - suggested replacement numbering
-- automatic pseudonymized preview generation after analysis
-- applying replacements from end to start
+- optimistic pseudonymized preview generation after analysis
 - disabled replacements are skipped
+- selection-to-manual-finding UI behavior
 
 Rust:
 
 - regex detection for structured sensitive info
 - model output validation
+- model download status and checksum/manifest validation
 - exact surface-form matching from LLM output to source ranges
 - overlap resolution
+- canonical grouping and replacement application from end to start
+- manual finding validation for selected ranges
+- license status and activation state handling without user text
 - sidecar status handling
 
 Python:
@@ -498,9 +574,12 @@ Python:
 - paste sample text
 - run deterministic-only analysis
 - show highlights
+- mark selected text as sensitive
 - edit replacement
 - verify pseudonymized preview updates automatically
-- copy final result
+- copy backend-confirmed final result
+- first-run model download completes and enables local LLM analysis
+- expired/unlicensed state falls back to deterministic/manual functionality
 
 ### Manual Test Text
 
@@ -522,7 +601,7 @@ Expected groups:
 - +41 44 123 45 67 -> `[PHONE_1]`
 - INV-2025-991 -> `[ID_2]`
 
-## 15. Build Phases
+## 16. Build Phases
 
 ### Phase 1: App Scaffold and Deterministic MVP
 
@@ -530,9 +609,11 @@ Expected groups:
 - Build two-pane UI
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
+- Implement canonical Rust grouping and range-based replacement application
 - Implement highlighting and replacement panel
 - Implement immediate range-based pseudonymized preview
 - Keep source highlights, replacement rows, and pseudonymized result synchronized
+- Add manual "mark selected text as sensitive"
 - Add unit tests for replacement logic
 
 Deliverable: usable app without LLM dependency.
@@ -540,20 +621,21 @@ Deliverable: usable app without LLM dependency.
 ### Phase 2: Local LLM Sidecar
 
 - Add Python sidecar service
-- Load local Qwen 1.7B from configured path or Hugging Face cache
+- Load local Qwen 1.7B from app-managed download, configured path, or Hugging Face cache
+- Add first-run model download UI with progress and clear privacy copy
+- Add checksum or manifest validation before model use
 - Implement chunk batching and strict JSON prompt
 - Add Rust command to start/status/check sidecar
 - Merge LLM findings with deterministic findings
 - Add model status UI
 
-Deliverable: local LLM-assisted detection.
+Deliverable: local LLM-assisted detection with guided model setup.
 
 ### Phase 3: Review Quality and UX Polish
 
 - Add click-to-focus between highlight and replacement row
 - Add type filters
 - Add confidence display or review badges
-- Add manual "mark selected text as sensitive"
 - Add "ignore finding" action
 - Add explicit "reset to suggested replacements" action
 - Improve chunk boundary selection
@@ -563,12 +645,15 @@ Deliverable: practical review workflow.
 ### Phase 4: Packaging
 
 - Bundle Python sidecar or provide managed runtime setup
+- Keep installer small by excluding the model from the app bundle
+- Add model download/update/delete settings
 - Add model path settings screen
+- Add privacy-preserving trial/license activation
 - Add platform-specific packaging notes for macOS, Windows, and Linux
 - Validate offline startup
 - Validate no user text appears in logs
 
-Deliverable: installable cross-platform desktop app.
+Deliverable: installable cross-platform desktop app suitable for lawyer-facing demos.
 
 ### Phase 5: Advanced Features
 
@@ -576,10 +661,11 @@ Deliverable: installable cross-platform desktop app.
 - Import/export replacement presets
 - Project/session save with explicit user consent
 - Support structured documents
+- Paid team or firm license management
 - Optional stronger local NER model or fine-tuned classifier
 - Optional native Rust inference runtime
 
-## 16. Key Risks and Mitigations
+## 17. Key Risks and Mitigations
 
 ### LLM Output Is Not Reliably Structured
 
@@ -604,9 +690,20 @@ Mitigation:
 
 Mitigation:
 
-- MVP can assume developer/local Python environment
+- Keep the app installer small and download the model after install
+- MVP can assume developer/local Python environment until the demo packaging pass
 - Later evaluate native inference or a bundled sidecar
 - Keep the sidecar API isolated so runtime can be swapped
+
+### Model Download or License Flow Hurts Trust
+
+Mitigation:
+
+- Require explicit user approval before model download
+- Show model size, destination, and local-only analysis promise before setup
+- Never send user text during setup, activation, or update checks
+- Keep deterministic/manual functionality available without activation
+- Verify model license and hosted-download rights before public/commercial distribution
 
 ### Replacing Text Naively Can Corrupt Output
 
@@ -614,13 +711,17 @@ Mitigation:
 
 - Apply only validated character ranges
 - Sort ranges descending
+- Use Rust as the canonical replacement engine
+- Confirm the final copied/exported result through the backend
 - Keep tests around overlapping and repeated spans
 
-## 17. Immediate Next Steps
+## 18. Immediate Next Steps
 
 1. Scaffold Tauri + React + TypeScript project.
-2. Implement shared TypeScript types and replacement utilities.
-3. Build the source editor, replacement list, and auto-updating result preview with mock findings.
+2. Implement shared TypeScript types and Rust-side grouping/replacement utilities.
+3. Build the source editor, replacement list, and auto-updating optimistic result preview with mock findings.
 4. Add deterministic detectors and wire them through a Tauri command.
-5. Add unit tests for grouping and replacement.
-6. Add the Python sidecar after the deterministic workflow feels solid.
+5. Add manual selected-text marking.
+6. Add unit tests for grouping, overlap resolution, manual findings, and replacement.
+7. Add first-run model setup UI state with placeholder download/status behavior.
+8. Add the Python sidecar after the deterministic workflow feels solid.
