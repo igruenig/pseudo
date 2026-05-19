@@ -99,6 +99,7 @@ Build the deterministic engine as if it may be open-sourced later, but do not op
 - `pseudo-core` must be a pure Rust library with no Tauri dependency, no license checks, no model download code, no sidecar IPC, no telemetry, no auto-update logic, and no network calls of any kind.
 - The Tauri binary crate owns app commands, UI-facing orchestration, license activation, license server URLs, signing-key handling, model download, sidecar IPC, packaging integration, and update mechanisms.
 - Every dependency in `pseudo-core` must be permissively licensed: MIT, Apache-2.0, BSD, ISC, or MPL-2.0. Do not allow GPL or AGPL dependencies in the core.
+- Before adding `phonenumber` or any other parsing dependency to `pseudo-core`, verify its license with `cargo deny` and keep it inside the permissive-license policy.
 - Add `cargo deny` in CI from day one to check dependency licenses and catch accidental policy drift while the codebase is still small.
 - Prefer Apache-2.0 for a future `pseudo-core` release because it includes an explicit patent grant.
 
@@ -236,6 +237,52 @@ Before invoking the LLM, run local regex/rule-based detection for:
 - obvious ID-like tokens
 
 Role and position detection should initially be handled by the LLM because job titles and functions are context-dependent and can be ambiguous.
+
+#### Deterministic Rule Contract for `pseudo-core/src/rules.rs`
+
+Keep Phase 1 deterministic rules conservative and documented. The goal is predictable useful detection, not broad NER coverage. Anything outside these rules should be handled by manual marking or, later, the local LLM.
+
+Email:
+
+- Accept ordinary address forms with a local part, `@`, domain labels, and a 2+ character TLD, using a compiled regex such as `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`.
+- Reject matches embedded inside longer tokens.
+
+URL:
+
+- Accept `http://` and `https://` URLs until whitespace or a closing bracket/quote.
+- Accept bare `www.` URLs only when followed by at least one dot and a 2+ character TLD.
+- Do not detect arbitrary bare domains in Phase 1 because false positives are high.
+
+Phone:
+
+- Use the `phonenumber` crate rather than hand-rolled regexes for accepted phone formats.
+- Accept international numbers with explicit country codes when `phonenumber` parses and validates them, including `+41 44 123 45 67` and `+49 (0)30 1234-5678` after normalizing optional national trunk markers such as `(0)`.
+- Accept North American numbers with area code when they parse as US/CA numbers, including `(415) 555-0123`, `415-555-0123`, and `415 555 0123`.
+- Reject short or bare local numbers without a country or area code, including `5551234`; users can mark these manually.
+- Reject numeric strings that are more likely IDs, dates, amounts, or short codes unless `phonenumber` validates them with clear country context.
+
+Date:
+
+- Accept unambiguous month-name dates: `12 March 2025`, `March 12, 2025`, `12 Mar 2025`, and `Mar 12, 2025`.
+- Accept ISO dates: `2025-03-12`.
+- Accept dotted or slashed numeric dates only when unambiguous:
+  - `13.03.2025` and `03/13/2025` are valid because one side is greater than 12.
+  - `12.03.2025` and `03/12/2025` are ambiguous and should not be auto-detected in Phase 1.
+- Do not normalize date values in Phase 1; preserve the exact detected surface form.
+
+ID numbers:
+
+- Accept contextual IDs when a nearby label appears within roughly 24 characters before the token. Labels include `id`, `case`, `matter`, `client`, `patient`, `account`, `invoice`, `ref`, `reference`, `ticket`, `claim`, and `policy`.
+- Accept token shape `\b[A-Z]{2,}[A-Z0-9]*(?:-[A-Z0-9]+)+\b` when the token contains at least one digit, such as `PT-44921` or `INV-2025-991`.
+- Reject lowercase hyphenated words and adjective phrases such as `gdpr-compliant`.
+- Reject known common false positives such as `COVID-19` unless a contextual ID label is present.
+- Reject generic all-caps words without digits.
+
+Acceptance criteria before implementing `rules.rs`:
+
+- Add positive fixtures for the first-run sample, Swiss phone, German phone with `(0)`, US phone, month-name dates, ISO dates, contextual IDs, email, and URL.
+- Add negative fixtures for `5551234`, `12.03.2025`, `03/12/2025`, `COVID-19`, `GDPR-compliant`, bare domains without scheme/`www`, and random hyphenated phrases.
+- Every deterministic finding must preserve exact source offsets and exact source text.
 
 Benefits:
 
@@ -729,6 +776,9 @@ Frontend:
 Rust:
 
 - `pseudo-core` regex detection for structured sensitive info
+- `pseudo-core` phone detection accepts validated international/area-code numbers through `phonenumber` and rejects bare local numbers such as `5551234`
+- `pseudo-core` date detection accepts month-name and ISO dates, accepts unambiguous numeric dates, and rejects ambiguous numeric dates such as `12.03.2025` and `03/12/2025`
+- `pseudo-core` ID detection accepts contextual uppercase/digit hyphenated IDs and rejects common false positives such as `COVID-19` and `GDPR-compliant`
 - `pseudo-core` has no Tauri, networking, license, model-download, sidecar, telemetry, or update dependencies
 - `pseudo-core` dependency licenses pass `cargo deny`
 - Tauri app crate model output validation
