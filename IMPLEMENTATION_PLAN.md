@@ -93,6 +93,7 @@ Backend sync rule:
 - Lead with the use case, not the implementation: help people use AI on confidential work without exposing identities.
 - Use plain language over technical jargon, and prefer observable behavior over broad privacy claims.
 - Never apologize for the Free tier, make the app feel incomplete, or pressure the user to upgrade.
+- Frame the trial in concrete value language, not generic unlock language: `Try LLM-assisted detection free for 14 days — catches names, organizations, and roles that pattern-matching can't.`
 
 ## 3. Initial Sensitive Information Types
 
@@ -677,6 +678,9 @@ async fn pause_model_download() -> Result<ModelDownloadStatus, AppError>;
 async fn get_license_status() -> Result<LicenseStatus, AppError>;
 
 #[tauri::command]
+async fn start_trial() -> Result<LicenseStatus, AppError>;
+
+#[tauri::command]
 async fn activate_license(license_key: String) -> Result<LicenseStatus, AppError>;
 
 #[tauri::command]
@@ -690,7 +694,7 @@ The frontend should call `analyze_text`, receive findings and replacement groups
 
 `ModelStatus` should expose `{ loaded: boolean, modelPath?: string, quantization?: string, backend: "metal" | "cpu" | "cuda" | "vulkan", loadMs?: number, residentMemoryMb?: number }`. Model lifecycle is in-process and owned by the Rust app/runtime layer.
 
-`LicenseStatus` should distinguish `Free`, `Trial`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include an expiry timestamp and must transition to `Free` on expiry rather than locking the app. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
+`LicenseStatus` should distinguish `Free`, `Trial`, `TrialExpired`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include `startedAt`, `expiresAt`, and `daysRemaining`, and must transition to `Free` on expiry rather than locking the app. `TrialExpired` is a local explanatory substate for copy and UI, not a locked tier. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
 
 `get_audit_log_status` and `record_analysis_event` support Firm and Enterprise tiers only. They must be license-gated and metadata-only: never source text, never finding surface forms, never replacement maps, and never pseudonymized output.
 
@@ -795,8 +799,18 @@ Firm and Enterprise should be possible in the architecture but absent from Phase
 
 - Trial lasts 14 days and unlocks Pro features.
 - No credit card is required to start a trial.
-- Trial expiry transitions the app to Free tier rather than locking the user out.
-- Trial expiry must call into the same license state transition system as paid license changes so the fallback behavior is tested and reliable.
+- Trial state is local-only. Starting or checking a trial must not contact a server.
+- Store `trial_started_at` and `device_id` in the OS-level secret store: macOS Keychain, Windows Credential Manager, and Linux Secret Service. Generate `device_id` as a random UUID on first app launch.
+- Read trial state on every app start and compute days remaining locally. Do not validate time against a network time source.
+- Accept that a determined user can reset the trial by clearing the keychain/credential entry or manipulating the system clock. Treat that as the cost of the privacy positioning, not as an abuse case worth adding server friction for.
+- Do not auto-start the trial on first launch. Start it only when the user chooses the post-own-text-analysis offer.
+- During trial, show quiet status copy such as `Pro trial · 12 days left`.
+- On days 13 and 14, show a non-blocking `Trial ends soon · Buy Pro` link. Never use a modal or block work.
+- On day 15, transition `Trial` to `Free` through the same license state transition system as paid license changes so fallback behavior is tested and reliable.
+- Show a one-time toast on expiry: `Trial ended · LLM-assisted detection turned off · deterministic detection still works.`
+- If the secret store shows a prior `trial_started_at`, do not grant a new trial. Show `You've already used your trial on this device. Buy Pro or continue with deterministic detection.`
+- Add an unobtrusive `Need more time to evaluate?` mailto link near the expired-trial state for sales-led extensions.
+- The privacy commitment document should say: `Your trial start date is stored in your operating system's keychain or credential manager. It is not sent to any server. If your keychain entry is cleared, the app cannot tell that you previously used a trial.`
 
 ### What We Will Not Do
 
@@ -807,7 +821,7 @@ Firm and Enterprise should be possible in the architecture but absent from Phase
 - No Free tier degradation over time.
 - No app-store distribution initially.
 
-Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never user content or pseudonymization artifacts. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
+Licensing should be privacy-preserving. The trial is purely local state and never contacts a server. Paid activation may contact a license server with license metadata and device/app identifiers, but never user content or pseudonymization artifacts. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
 
 Keep the open-sourceable boundary explicit: the license activation flow, license server URL, signing keys, entitlement checks, paid feature gates, model download manager, model runtime, auto-update mechanism, platform-specific installer logic, and frontend UI all live outside `pseudo-core`. Publishing `pseudo-core` later must not reveal license-validation internals or proprietary product infrastructure.
 
@@ -821,6 +835,7 @@ The app should avoid asking for license activation before the user has interacte
 - Do not log user text in Rust or the frontend console.
 - Never send user content or pseudonymization artifacts to any network service. This includes pasted text, imported document content, saved project content, manually marked text, findings, replacement maps, and pseudonymized output.
 - License activation, model download, update checks, and enterprise/admin sync may send only non-content metadata required for those operations.
+- Trial start/check/expiry must be local-only. The app must store trial metadata in the OS-level secret store and must not send trial state to any server.
 - `pseudo-core` must make no network calls of any kind. It must not include update checks, license checks, model downloads, crash reporting, telemetry, HTTP clients, socket clients, or model runtime orchestration.
 - All network activity must live in the outer app/runtime crates and be auditable at that boundary.
 - Firm and Enterprise audit logging records metadata only: timestamp, local user identifier, analysis duration, finding count, and finding types as aggregate counts. It must never record source text, finding surface forms, replacement maps, or pseudonymized output.
@@ -915,6 +930,7 @@ pseudo/
         commands.rs
         analysis.rs
         license.rs
+        secret_store.rs
         audit_log.rs
         model_download.rs
         model_runtime.rs
@@ -928,6 +944,8 @@ This repository currently contains the plan at the root. Once the app scaffold e
 `pseudo-core` should be independently buildable and testable. The Tauri app crate and `pseudo-cli` should depend on it as consumers rather than duplicating deterministic logic. The CLI should be usable in CI for end-to-end deterministic analysis tests without launching the desktop UI.
 
 `src-tauri/app/src/model_runtime.rs` owns the `llama-cpp-2` integration, model lifecycle, GBNF grammar definition, and inference loop. If this code grows beyond roughly 1000 LOC, move it into a dedicated closed `src-tauri/pseudo-runtime` crate so `app/` stays focused on commands and orchestration. Do not move inference code into `pseudo-core`.
+
+`src-tauri/app/src/secret_store.rs` should wrap macOS Keychain, Windows Credential Manager, and Linux Secret Service behind a tiny interface used by `license.rs` for local trial metadata. Keep this in the closed app crate, not `pseudo-core`.
 
 The admin console path is reserved for Firm and Enterprise tiers, but it should not be built in Phase 1. It can begin as a separate frontend bundle under `src/admin/` and later move to a web-based dashboard that talks to an on-prem license server for Enterprise deployments.
 
@@ -973,6 +991,7 @@ Rust:
 - manual finding validation for selected ranges
 - stale text hash rejection for apply/recompute/copy paths
 - license status and activation state handling without user text
+- local trial state machine stores `trial_started_at` and `device_id` in an OS secret-store abstraction, computes expiry without network access, refuses same-device re-trial when prior state exists, and transitions expired trials to Free
 - model runtime status handling for loaded/unloaded/backend/quantization/load time/resident memory
 - `app::model_runtime` or `pseudo-runtime` loads a fixture GGUF model and returns valid JSON for a known chunk
 - GBNF grammar produces only schema-conformant JSON across a representative test set
@@ -1003,6 +1022,8 @@ Rust:
 - copy backend-confirmed final result and show `Pseudonymized text copied · no text or results sent`
 - optional model download completes and enables local LLM analysis
 - expired/unlicensed state falls back to deterministic/manual functionality
+- starting a trial after own-text analysis writes only local secret-store metadata and makes no network request
+- trial day 13/14 warning is non-blocking, day 15 expiry transitions to Free, and the one-time expiry toast appears without blocking deterministic work
 
 ### First-Run Sample and Manual Test Text
 
@@ -1049,6 +1070,7 @@ Expected groups:
 - Add deterministic readiness summary before copy, including findings count, enabled replacements, disabled/ignored counts, and items needing review
 - Add honest first-launch locality proof, such as `Demo ready locally · no text or results sent`, and show measured timing only after user-initiated analysis
 - Add copy toast `Pseudonymized text copied · no text or results sent`, clear action, and polished empty/no-findings/error states
+- Add the closed app-crate trial state machine using the OS secret store, but keep the start-trial prompt hidden until after the user has analyzed their own text
 - Add unit tests for replacement logic
 - Add an automated first-run golden-path test for fresh install, no model, no license, already-analyzed sample, before/after preview, review, locality proof, and copy
 
@@ -1082,6 +1104,7 @@ Phase 3 entry decisions to lock before implementation:
 - Add chunk batching: send N chunks per inference call, start with N=4, tune empirically, parse the structured JSON output, and pass `(chunk_index, surface_form, type, confidence)` tuples to `pseudo-core` for offset resolution.
 - Merge LLM findings with deterministic findings using the existing overlap-resolution rules in `pseudo-core`.
 - Add model status UI and post-analysis upgrade prompt only after the user has run deterministic analysis on their own text.
+- Use the post-analysis prompt as the trial activation entry point: `Try LLM-assisted detection free for 14 days — catches names, organizations, and roles that pattern-matching can't.`
 - Add model-assisted alias/co-reference suggestions as reviewable proposals, not automatic merges.
 - Backend selection per platform: Metal on macOS, CPU on Windows/Linux for the default installer. CUDA and Vulkan builds are Phase 4 packaging decisions, not default v1 requirements.
 
@@ -1112,7 +1135,7 @@ Deliverable: an auditable deterministic engine and CLI that security teams can i
 - Ship `third-party-notices.md` including the Apache-2.0 license for Qwen3-1.7B, MIT license for llama.cpp, and MIT OR Apache-2.0 license notice for `llama-cpp-2`
 - Add model download/update/delete settings
 - Add model path settings screen
-- Add privacy-preserving trial/license activation for Free, Trial, Pro subscription, Pro perpetual, Firm, and Enterprise states
+- Add privacy-preserving paid license activation for Pro subscription, Pro perpetual, Firm, and Enterprise states. Preserve the already-local trial mechanism rather than moving it to the license server.
 - Add subscription and perpetual license infrastructure, including perpetual maintenance windows and update eligibility
 - Add trial-to-Free fallback logic so expiry never locks the user out
 - Add metadata-only analysis event recording behind Firm/Enterprise license gates
@@ -1188,6 +1211,7 @@ Mitigation:
 - Show model size, destination, and local-only analysis promise before setup
 - Never send user content or pseudonymization artifacts during setup, activation, update checks, model download, or admin sync
 - Keep deterministic/manual functionality available without activation
+- Keep the trial local-only. Do not add server contact, fingerprinting, or network time checks to reduce trial resets.
 - Qwen3-1.7B license and hosted-download rights are resolved for the current model choice under Apache-2.0; preserve upstream license files and re-verify before changing models
 
 ### Free Tier Cannibalizes Paid
@@ -1245,5 +1269,5 @@ Mitigation:
 13. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis on their own text.
 14. Add `llama-cpp-2` integration in a new `model_runtime` module inside the Tauri app crate, or a closed `pseudo-runtime` crate, after the deterministic review workflow feels solid. Use `ggml-org/Qwen3-1.7B-GGUF:Q4_K_M` as the default model target unless an official Qwen-namespace Q4_K_M file exists before implementation.
 15. Write a GBNF grammar that constrains llama.cpp output to the `{findings: [...]}` schema. Add a unit test that runs the grammar against a fixture model and asserts the output parses.
-16. Write the licensing state machine in Rust before adding paid features: `Free`, `Trial` with expiry timestamp, `ProSubscription` with renewal date, `ProPerpetual` with maintenance-active flag and update-eligible-until date, `Firm`, and `Enterprise`.
-17. Draft the audit log schema and explicit list of fields recorded and not recorded as a privacy commitment document that ships with the product.
+16. Write the local trial and licensing state machine in Rust before adding paid features: `Free`, `Trial` with local secret-store `startedAt`/`expiresAt`, `TrialExpired` explanatory state, `ProSubscription` with renewal date, `ProPerpetual` with maintenance-active flag and update-eligible-until date, `Firm`, and `Enterprise`.
+17. Draft the audit log schema, local trial privacy wording, and explicit list of fields recorded and not recorded as privacy commitment documents that ship with the product.
