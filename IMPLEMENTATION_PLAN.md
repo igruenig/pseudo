@@ -2,11 +2,13 @@
 
 ## 1. Product Goal
 
-Build a cross-platform desktop app with Tauri for professionals who handle confidential text and want to use AI without sending identifying details anywhere. Lawyers are the initial launch wedge, but the product should remain horizontal enough for therapists, HR teams, consultants, executives, researchers, and other privacy-sensitive professionals. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
+Build a cross-platform desktop app with Tauri for professionals who handle confidential text and want to use AI without sending text or pseudonymization data off-device. Lawyers are the initial launch wedge, but the product should remain horizontal enough for therapists, HR teams, consultants, executives, researchers, and other privacy-sensitive professionals. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
 
-The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration, with the privacy promise reinforced by observable local behavior rather than heavy explanatory copy. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
+The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration, with the privacy promise reinforced by observable local pseudonymization behavior rather than heavy explanatory copy. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
 
-Treat the deterministic/manual app as the real MVP, not as a degraded fallback. The local LLM should arrive later as an accuracy upgrade after the user has already seen a useful, private, understandable workflow.
+Treat the deterministic/manual app as the real MVP, not as a degraded fallback. The local LLM should arrive later as an accuracy upgrade after the user has already seen a useful, local, understandable workflow.
+
+Privacy invariant: user content never leaves the machine. No source text, detected findings, replacement map, pseudonymized output, saved project content, imported document content, or manually marked text may ever be sent to any network service. Pseudonymization always runs locally, including when the optional model is installed. The app may use the network only for explicit non-content operations such as downloading a model, license activation, update checks, or enterprise/admin metadata sync, and those operations must never include user content or pseudonymization artifacts.
 
 ## 2. Core User Flow
 
@@ -17,8 +19,8 @@ The first launch should open into a usable deterministic/manual app, not a setup
 1. App opens with a realistic confidential-work sample already analyzed. The initial sample can resemble a lawyer's intake note or settlement message, but product UI copy should not mention legal work, law firms, or lawyers.
 2. The first visible state shows highlighted original text, populated replacement groups, a rendered pseudonymized result, readiness summary, enabled `Copy result`, and clear action.
 3. The primary first-run action is `Try your own text`, which clears the sample and focuses the empty editor.
-4. The first-run trust strip uses use-case language: `Use AI on confidential work`, `Nothing leaves this device`, `Nothing saved`, and a neutral status such as `Basic detection active`. Avoid `deterministic mode` and avoid model-status language on the first screen.
-5. After the pre-analyzed sample appears, show a subtle proof of locality such as `Analyzed in 230 ms · no network used`.
+4. The first-run trust strip uses use-case language: `Use AI on confidential work`, `No text or results are sent`, `Nothing saved`, and a neutral status such as `Basic detection active`. Avoid `deterministic mode` and avoid model-status language on the first screen.
+5. After the pre-analyzed sample appears, show a subtle proof of locality such as `Analyzed locally in 230 ms · no text or results sent`.
 6. The app does not show license activation, account creation, settings, model download, model status, upgrade banners, or sidecar setup as primary first-run actions.
 7. The UI explains model setup only after the user has successfully analyzed their own text at least once: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
 
@@ -34,8 +36,8 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 - Secondary review controls such as type filters, confidence badges, ignore actions, and reset-to-suggested should be progressively disclosed rather than visible by default on first launch.
 - Warnings should be concise and actionable. Avoid confidence-killing global disclaimers before the user has seen the workflow.
 - Any model-download or license prompt should appear only after a successful analysis on the user's own text, not after the built-in sample alone.
-- When the user clears the sample, the empty editor placeholder should say: `Paste confidential text. Nothing leaves this device.`
-- Copy confirmation should be a transient toast, not a modal, with specific reassurance: `Pseudonymized text copied · original stayed on this device`.
+- When the user clears the sample, the empty editor placeholder should say: `Paste confidential text. No text or results are sent.`
+- Copy confirmation should be a transient toast, not a modal, with specific reassurance: `Pseudonymized text copied · no text or results sent`.
 
 ### Working Flow
 
@@ -56,7 +58,7 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 9. User reviews and edits replacements.
 10. The pseudonymized preview updates immediately after each replacement edit or toggle.
 11. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
-12. User copies the final text and sees `Pseudonymized text copied · original stayed on this device`.
+12. User copies the final text and sees `Pseudonymized text copied · no text or results sent`.
 
 ### Voice and Copy Principles
 
@@ -422,7 +424,7 @@ First-launch demo layout:
 - Lead with before/after transformation.
 - Show the already-analyzed sample original and pseudonymized result directly beside each other on desktop or stacked on mobile.
 - Keep replacement review visible but secondary, either below the before/after comparison or in a narrower side panel.
-- Show `Copy result` enabled, `Try your own text` as the primary next action, and a subtle proof line such as `Analyzed in 230 ms · no network used`.
+- Show `Copy result` enabled, `Try your own text` as the primary next action, and a subtle proof line such as `Analyzed locally in 230 ms · no text or results sent`.
 
 Working layout after the user pastes their own text, edits the source, or interacts with replacements:
 
@@ -451,7 +453,7 @@ Left pane states:
 - Pseudonymized preview generated immediately after analysis
 - Error state
 
-The empty input placeholder should say: `Paste confidential text. Nothing leaves this device.`
+The empty input placeholder should say: `Paste confidential text. No text or results are sent.`
 
 Right pane states:
 
@@ -595,12 +597,12 @@ For the initial professional-facing demo and future sales flow, keep the app ins
 - validate the model with a checksum or manifest before use
 - store the model under an app-managed data directory by default
 - allow advanced users to choose an existing local model path
-- avoid sending pasted/user text during setup, activation, or update checks
+- never send user content or pseudonymization artifacts during setup, activation, update checks, or model download
 - verify commercial redistribution and hosted-download rights for the selected model before distributing outside private demos
 
 ## 12. Commercial Demo, Trial, and Pricing
 
-The sales/demo experience should optimize for trust and time-to-value for professionals who handle confidential text: install quickly, show a useful deterministic result immediately, make setup understandable, and avoid sending private work anywhere. Lawyers are the initial go-to-market wedge, but pricing and product language should remain horizontal.
+The sales/demo experience should optimize for trust and time-to-value for professionals who handle confidential text: install quickly, show a useful deterministic result immediately, make setup understandable, and avoid sending source text, findings, replacements, or pseudonymized output anywhere. Lawyers are the initial go-to-market wedge, but pricing and product language should remain horizontal.
 
 Recommended packaging:
 
@@ -635,7 +637,7 @@ Firm and Enterprise should be possible in the architecture but absent from Phase
 - No Free tier degradation over time.
 - No app-store distribution initially.
 
-Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never pasted text, extracted findings, replacement maps, or pseudonymized results. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
+Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never user content or pseudonymization artifacts. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
 
 Keep the open-sourceable boundary explicit: the license activation flow, license server URL, signing keys, entitlement checks, paid feature gates, model download manager, auto-update mechanism, sidecar packaging, platform-specific installer logic, and frontend UI all live outside `pseudo-core`. Publishing `pseudo-core` later must not reveal license-validation internals or proprietary product infrastructure.
 
@@ -647,7 +649,8 @@ The app should avoid asking for license activation before the user has interacte
 - No analytics or telemetry in MVP.
 - Do not persist pasted text unless the user explicitly saves a project later.
 - Do not log user text in Rust, Python, or frontend console.
-- Do not send pasted text, findings, replacement maps, or pseudonymized output during license activation, model download, or update checks.
+- Never send user content or pseudonymization artifacts to any network service. This includes pasted text, imported document content, saved project content, manually marked text, findings, replacement maps, and pseudonymized output.
+- License activation, model download, update checks, and enterprise/admin sync may send only non-content metadata required for those operations.
 - `pseudo-core` must make no network calls of any kind. It must not include update checks, license checks, model downloads, crash reporting, telemetry, HTTP clients, socket clients, or sidecar IPC.
 - All network activity must live in the outer app/runtime crates and be auditable at that boundary.
 - Firm and Enterprise audit logging records metadata only: timestamp, local user identifier, analysis duration, finding count, and finding types as aggregate counts. It must never record source text, finding surface forms, replacement maps, or pseudonymized output.
@@ -800,7 +803,7 @@ Python:
 ### Integration Tests
 
 - fresh install, no model, no license: open app and immediately see an already-analyzed confidential-work sample with highlights, grouped replacements, before/after preview, readiness summary, locality proof, and enabled `Copy result`
-- click `Try your own text`, clear the sample, focus the editor, and show `Paste confidential text. Nothing leaves this device.`
+- click `Try your own text`, clear the sample, focus the editor, and show `Paste confidential text. No text or results are sent.`
 - paste sample text
 - run deterministic-only analysis on user-provided text without model setup
 - run deterministic-only analysis
@@ -809,7 +812,7 @@ Python:
 - edit replacement
 - verify pseudonymized preview updates automatically
 - verify readiness summary reflects enabled, disabled, ignored, and review-needed findings
-- copy backend-confirmed final result and show `Pseudonymized text copied · original stayed on this device`
+- copy backend-confirmed final result and show `Pseudonymized text copied · no text or results sent`
 - optional model download completes and enables local LLM analysis
 - expired/unlicensed state falls back to deterministic/manual functionality
 
@@ -842,9 +845,9 @@ Expected groups:
 - Create `pseudo-core` as a pure Rust library and keep deterministic detectors, chunking, grouping, overlap resolution, replacement, manual-finding validation, and shared types inside it
 - Create `pseudo-cli` as a thin wrapper around `pseudo-core` for UI-free deterministic analysis and integration tests
 - Add `cargo deny` with permissive-license policy for `pseudo-core`
-- Build a polished first-launch before/after demo layout with a compact trust/status strip: `Local only`, `Nothing saved`, `Basic detection active`, and `Clear`
+- Build a polished first-launch before/after demo layout with a compact trust/status strip: `No text or results are sent`, `Nothing saved`, `Basic detection active`, and `Clear`
 - Add preloaded confidential-work sample text that opens already analyzed using a bundled verified replacement map
-- Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste confidential text. Nothing leaves this device.`
+- Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste confidential text. No text or results are sent.`
 - Hide license activation, account creation, settings, model download, model status, upgrade banners, and sidecar setup from the primary first-run path
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
@@ -854,8 +857,8 @@ Expected groups:
 - Keep source highlights, replacement rows, and pseudonymized result synchronized
 - Add manual "mark selected text as sensitive"
 - Add concise readiness summary before copy, including findings count, enabled replacements, and items needing review
-- Add locality proof after analysis, such as `Analyzed in 230 ms · no network used`
-- Add copy toast `Pseudonymized text copied · original stayed on this device`, clear action, and polished empty/no-findings/error states
+- Add locality proof after analysis, such as `Analyzed locally in 230 ms · no text or results sent`
+- Add copy toast `Pseudonymized text copied · no text or results sent`, clear action, and polished empty/no-findings/error states
 - Add unit tests for replacement logic
 - Add an automated first-run golden-path test for fresh install, no model, no license, already-analyzed sample, before/after preview, review, locality proof, and copy
 
@@ -984,7 +987,7 @@ Mitigation:
 - Show deterministic/manual value on the user's own text before asking the user to download a model or activate a license
 - Do not show model download, activation, account creation, or settings as primary actions on the first screen
 - Show model size, destination, and local-only analysis promise before setup
-- Never send user text during setup, activation, or update checks
+- Never send user content or pseudonymization artifacts during setup, activation, update checks, model download, or admin sync
 - Keep deterministic/manual functionality available without activation
 - Verify model license and hosted-download rights before public/commercial distribution
 
