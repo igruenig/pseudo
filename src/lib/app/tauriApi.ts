@@ -39,7 +39,29 @@ export async function createManualFinding(
       confidence: 1
     };
   }
-  return invoke("create_manual_finding", { requestId, text, start, end, type_: type });
+  return invoke("create_manual_finding", { requestId, text, start, end, type });
+}
+
+export async function recomputeAnalysis(
+  requestId: string,
+  text: string,
+  expectedTextHash: string,
+  findings: Finding[],
+  groups: ReplacementGroup[]
+): Promise<AnalysisResult> {
+  if (!isTauri) {
+    const { buildGroups, applyReplacements } = await import("../core/replacements");
+    const nextGroups = buildGroups(findings);
+    return {
+      requestId,
+      sourceTextHash: expectedTextHash,
+      findings,
+      groups: nextGroups,
+      pseudonymizedText: applyReplacements(text, findings, groups.length > 0 ? groups : nextGroups),
+      warnings: []
+    };
+  }
+  return invoke("recompute_analysis", { requestId, text, expectedTextHash, findings, groups });
 }
 
 export async function getModelStatus(): Promise<ModelStatus> {

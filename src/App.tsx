@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, startModelDownload } from "./lib/app/tauriApi";
+import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, recomputeAnalysis, startModelDownload } from "./lib/app/tauriApi";
 import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
 import { buildInlineSegments } from "./lib/core/inlineSegments";
@@ -243,18 +243,32 @@ export default function App() {
     const byteEnd = selectedEnd >= 0 ? selectedEnd : stringIndexToByteOffset(text, end);
     if (byteStart < 0 || byteEnd <= byteStart) return;
 
-    const finding = await createManualFinding(
-      crypto.randomUUID(),
-      text,
-      byteStart,
-      byteEnd,
-      manualType
-    );
-    const nextResult = { ...result, findings: [...result.findings, finding] };
-    setResult(nextResult);
-    setGroups((await import("./lib/core/replacements")).buildGroups(nextResult.findings));
-    setManualSelection(null);
-    window.getSelection()?.removeAllRanges();
+    setError(null);
+    try {
+      const finding = await createManualFinding(
+        crypto.randomUUID(),
+        text,
+        byteStart,
+        byteEnd,
+        manualType
+      );
+      const findings = [...result.findings, finding];
+      const { rebuildGroupsPreservingEdits } = await import("./lib/core/replacements");
+      const nextGroups = rebuildGroupsPreservingEdits(findings, groups);
+      const nextResult = await recomputeAnalysis(
+        crypto.randomUUID(),
+        text,
+        result.sourceTextHash,
+        findings,
+        nextGroups
+      );
+      setResult({ ...nextResult, groups: nextGroups });
+      setGroups(nextGroups);
+      setManualSelection(null);
+      window.getSelection()?.removeAllRanges();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (
@@ -347,7 +361,11 @@ export default function App() {
       </section>
 
       {manualSelection ? (
-        <div className="selection-toolbar" style={{ top: manualSelection.top, left: manualSelection.left }}>
+        <div
+          className="selection-toolbar"
+          onMouseDown={(event) => event.preventDefault()}
+          style={{ top: manualSelection.top, left: manualSelection.left }}
+        >
           <select value={manualType} onChange={(event) => setManualType(event.target.value as SensitiveType)}>
             {MANUAL_TYPES.map((type) => <option key={type}>{type}</option>)}
           </select>

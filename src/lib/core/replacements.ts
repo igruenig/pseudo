@@ -48,6 +48,25 @@ export function buildGroups(findings: Finding[]): ReplacementGroup[] {
   return [...groups.values()];
 }
 
+export function rebuildGroupsPreservingEdits(
+  findings: Finding[],
+  existingGroups: ReplacementGroup[]
+): ReplacementGroup[] {
+  const existingByKey = new Map(
+    existingGroups.map((group) => [`${group.type}:${group.normalizedOriginal}`, group])
+  );
+
+  return buildGroups(findings).map((group) => {
+    const existing = existingByKey.get(`${group.type}:${group.normalizedOriginal}`);
+    if (!existing) return group;
+    return {
+      ...group,
+      replacement: existing.replacement,
+      enabled: existing.enabled
+    };
+  });
+}
+
 export function applyReplacements(
   text: string,
   findings: Finding[],

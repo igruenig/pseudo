@@ -54,9 +54,9 @@ pub async fn create_manual_finding(
     text: String,
     start: usize,
     end: usize,
-    type_: SensitiveType,
+    r#type: SensitiveType,
 ) -> Result<Finding, String> {
-    create_core_manual_finding(&text, start, end, type_).map_err(|error| error.to_string())
+    create_core_manual_finding(&text, start, end, r#type).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
