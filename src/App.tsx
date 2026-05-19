@@ -11,6 +11,8 @@ import "./styles.css";
 const MANUAL_TYPES: SensitiveType[] = ["PERSON_NAME", "ORGANIZATION", "LOCATION", "OTHER_SENSITIVE"];
 type FloatingPoint = { top: number; left: number };
 type ManualSelection = FloatingPoint & { start: number; end: number };
+const SELECTION_TOOLBAR_WIDTH = 236;
+const VIEWPORT_MARGIN = 12;
 
 export default function App() {
   const [text, setText] = useState("");
@@ -205,11 +207,15 @@ export default function App() {
     }
 
     const rect = range.getBoundingClientRect();
+    const toolbarHalfWidth = SELECTION_TOOLBAR_WIDTH / 2;
     setManualSelection({
       start: Math.min(start, end),
       end: Math.max(start, end),
-      top: Math.max(12, rect.top - 46),
-      left: rect.left + rect.width / 2
+      top: Math.max(VIEWPORT_MARGIN, rect.top - 46),
+      left: Math.min(
+        window.innerWidth - toolbarHalfWidth - VIEWPORT_MARGIN,
+        Math.max(toolbarHalfWidth + VIEWPORT_MARGIN, rect.left + rect.width / 2)
+      )
     });
   }
 
