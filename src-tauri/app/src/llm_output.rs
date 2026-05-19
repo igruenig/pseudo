@@ -16,10 +16,12 @@ pub struct LlmResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LlmFinding {
+    #[serde(default, alias = "chunkIndex", alias = "chunk")]
     pub chunk_index: usize,
+    #[serde(alias = "entity", alias = "surface", alias = "surfaceForm", alias = "value")]
     pub text: String,
+    #[serde(alias = "label", alias = "kind", alias = "category")]
     #[serde(deserialize_with = "deserialize_sensitive_type")]
     pub r#type: SensitiveType,
     #[serde(default)]
@@ -173,21 +175,29 @@ impl<'de> Deserialize<'de> for LegacyFinding {
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let Some(items) = value.as_array() else {
-            return Err(de::Error::custom("legacy finding must be an array"));
-        };
-        let text = items
-            .first()
-            .and_then(Value::as_str)
-            .ok_or_else(|| de::Error::custom("legacy finding missing text"))?
-            .to_string();
-        let type_name = items
-            .get(1)
-            .and_then(Value::as_str)
-            .ok_or_else(|| de::Error::custom("legacy finding missing type"))?;
+        let (text, type_name) = legacy_text_and_type(&value)
+            .ok_or_else(|| de::Error::custom("legacy finding missing text/type"))?;
         let r#type = parse_sensitive_type(type_name).map_err(de::Error::custom)?;
-        Ok(Self { text, r#type })
+        Ok(Self {
+            text: text.to_string(),
+            r#type,
+        })
     }
+}
+
+fn legacy_text_and_type(value: &Value) -> Option<(&str, &str)> {
+    if let Some(items) = value.as_array() {
+        return Some((items.first()?.as_str()?, items.get(1)?.as_str()?));
+    }
+
+    let object = value.as_object()?;
+    let text = ["text", "entity", "surface", "surfaceForm", "value"]
+        .iter()
+        .find_map(|key| object.get(*key)?.as_str())?;
+    let type_name = ["type", "label", "kind", "category"]
+        .iter()
+        .find_map(|key| object.get(*key)?.as_str())?;
+    Some((text, type_name))
 }
 
 fn parse_sensitive_type(value: &str) -> Result<SensitiveType, String> {
@@ -354,5 +364,37 @@ done"#;
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].text, "Vincent Bolloré");
         assert_eq!(warnings.len(), 2);
+    }
+
+    #[test]
+    fn accepts_missing_chunk_index_for_single_document_outputs() {
+        let source = "Vincent Bolloré traf Bollorés Team.";
+        let chunks = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: source.len(),
+            text: source.into(),
+        }];
+        let json = r#"{"findings":[{"text":"Vincent Bolloré","type":"PERSON_NAME","confidence":0.91},{"entity":"Bollorés","label":"PERSON","confidence":0.74}]}"#;
+        let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].text, "Vincent Bolloré");
+        assert_eq!(findings[1].text, "Bollorés");
+    }
+
+    #[test]
+    fn adapts_legacy_object_map_output() {
+        let source = "Vincent Bolloré met ACME AG.";
+        let chunks = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: source.len(),
+            text: source.into(),
+        }];
+        let json = r#"{"0":{"entity":"Vincent Bolloré","label":"person"},"1":{"surface":"ACME AG","kind":"company"}}"#;
+        let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
+        assert_eq!(findings.len(), 2);
+        assert_eq!(warnings, vec!["Adapted non-schema LLM output"]);
     }
 }
