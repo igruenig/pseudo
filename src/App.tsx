@@ -95,10 +95,42 @@ export default function App() {
 
   async function handleCopy() {
     if (!result || state !== "ANALYZED_READY") return;
-    const confirmed = await applyReplacementsBackend(text, result.sourceTextHash, groups);
-    await navigator.clipboard.writeText(confirmed);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    setError(null);
+    try {
+      const confirmed = await applyReplacementsBackend(text, result.sourceTextHash, groups);
+      await writeClipboard(confirmed);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function writeClipboard(value: string) {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return;
+      } catch {
+        // Some WebViews expose navigator.clipboard but reject writes; fall back to selection copy.
+      }
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.readOnly = true;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copiedWithFallback = document.execCommand("copy");
+    document.body.removeChild(textarea);
+
+    if (!copiedWithFallback) {
+      throw new Error("Copy failed. Select the document text and copy manually.");
+    }
   }
 
   function handleClear() {
