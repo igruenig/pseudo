@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { analyzeText, applyReplacementsBackend, getModelDownloadStatus, getModelStatus, startModelDownload } from "./lib/app/tauriApi";
+import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, startModelDownload } from "./lib/app/tauriApi";
 import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
 import { buildPreview } from "./lib/core/preview";
@@ -36,6 +36,14 @@ export default function App() {
     void refreshModel();
   }, []);
 
+  useEffect(() => {
+    if (downloadStatus?.state !== "downloading") return;
+    const interval = window.setInterval(() => {
+      void refreshModel();
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [downloadStatus?.state]);
+
   async function refreshModel() {
     const [status, download] = await Promise.all([getModelStatus(), getModelDownloadStatus()]);
     setModelStatus(status);
@@ -62,7 +70,15 @@ export default function App() {
     setError(null);
     try {
       setDownloadStatus(await startModelDownload());
-      await refreshModel();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleCancelDownload() {
+    setError(null);
+    try {
+      setDownloadStatus(await cancelModelDownload());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -96,16 +112,7 @@ export default function App() {
     const start = editorRef.current?.selectionStart ?? -1;
     const end = editorRef.current?.selectionEnd ?? -1;
     if (!result || start < 0 || end <= start) return;
-    const selected = text.slice(start, end);
-    const finding = {
-      id: `manual-${crypto.randomUUID()}`,
-      type: manualType,
-      start,
-      end,
-      text: selected,
-      source: "MANUAL" as const,
-      confidence: 1
-    };
+    const finding = await createManualFinding(crypto.randomUUID(), text, start, end, manualType);
     const nextResult = { ...result, findings: [...result.findings, finding] };
     setResult(nextResult);
     setGroups((await import("./lib/core/replacements")).buildGroups(nextResult.findings));
@@ -128,7 +135,9 @@ export default function App() {
       <section className="model-strip">
         <span>{formatModelStatus(modelStatus)}</span>
         <span>{downloadStatus ? formatDownloadStatus(downloadStatus) : "Checking model..."}</span>
-        {!modelStatus.loaded && downloadStatus?.state !== "downloading" ? (
+        {downloadStatus?.state === "downloading" ? (
+          <button onClick={handleCancelDownload}>Cancel</button>
+        ) : !modelStatus.loaded && downloadStatus?.state !== "complete" ? (
           <button onClick={handleDownloadModel}>Download model</button>
         ) : null}
       </section>

@@ -70,6 +70,18 @@ export async function startModelDownload(): Promise<ModelDownloadStatus> {
   return invoke("start_model_download");
 }
 
+export async function cancelModelDownload(): Promise<ModelDownloadStatus> {
+  if (!isTauri) {
+    return {
+      state: "cancelled",
+      modelName: "Qwen3-1.7B Q4_K_M",
+      destinationPath: "app data",
+      bytesDownloaded: 0
+    };
+  }
+  return invoke("cancel_model_download");
+}
+
 async function mockAnalyze(requestId: string, text: string): Promise<AnalysisResult> {
   const { buildGroups, applyReplacements } = await import("../core/replacements");
   const { hashText } = await import("../core/state");
