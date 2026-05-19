@@ -1,0 +1,16 @@
+[workspace]
+members = ["pseudo-core", "pseudo-cli", "app"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Proprietary"
+rust-version = "1.77"
+
+[workspace.dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+uuid = { version = "1.18", features = ["v4", "serde"] }
