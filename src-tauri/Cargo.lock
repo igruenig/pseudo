@@ -2548,6 +2548,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "dirs",
+ "encoding_rs",
  "futures-util",
  "llama-cpp-2",
  "pseudo-core",

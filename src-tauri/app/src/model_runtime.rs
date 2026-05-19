@@ -1,19 +1,24 @@
 use std::{
+    num::NonZeroU32,
     path::PathBuf,
     sync::Arc,
     time::Instant,
 };
 
 use llama_cpp_2::{
+    context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
+    llama_batch::LlamaBatch,
+    model::AddBos,
     model::{params::LlamaModelParams, LlamaModel},
+    sampling::LlamaSampler,
 };
 use pseudo_core::chunking::chunk_text_for_analysis;
 use pseudo_core::{Finding, ModelBackend, ModelStatus};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::llm_output::response_grammar;
+use crate::llm_output::{parse_llm_response, response_grammar};
 
 #[derive(Default)]
 pub struct ModelRuntime {
@@ -21,7 +26,7 @@ pub struct ModelRuntime {
 }
 
 struct LoadedModel {
-    _backend: LlamaBackend,
+    backend: LlamaBackend,
     model: LlamaModel,
     path: PathBuf,
     load_ms: u64,
@@ -37,6 +42,14 @@ pub enum ModelRuntimeError {
     Load(String),
     #[error("Failed to build model output grammar: {0}")]
     Grammar(String),
+    #[error("Failed to create llama.cpp context: {0}")]
+    Context(String),
+    #[error("Failed to tokenize prompt: {0}")]
+    Tokenize(String),
+    #[error("Failed to decode model tokens: {0}")]
+    Decode(String),
+    #[error("Failed to parse model output: {0}")]
+    Parse(String),
 }
 
 impl ModelRuntime {
@@ -63,7 +76,7 @@ impl ModelRuntime {
             let load_ms = started.elapsed().as_millis() as u64;
 
             LoadedModel {
-                _backend: backend,
+                backend,
                 model,
                 path,
                 load_ms,
@@ -87,15 +100,13 @@ impl ModelRuntime {
             .unwrap_or_else(|| status_for(None, None))
     }
 
-    pub async fn detect(&self, _text: &str) -> Result<Vec<Finding>, ModelRuntimeError> {
+    pub async fn detect(&self, text: &str) -> Result<Vec<Finding>, ModelRuntimeError> {
         if self.state.lock().await.is_none() {
             self.load().await?;
         }
-        let _grammar = response_grammar().map_err(ModelRuntimeError::Grammar)?;
-        let _chunks = chunk_text_for_analysis(_text, 2_000);
-        // The next implementation slice creates a context, applies the JSON grammar,
-        // and converts model-returned surface forms into source ranges.
-        Ok(Vec::new())
+        let guard = self.state.lock().await;
+        let loaded = guard.as_ref().ok_or(ModelRuntimeError::MissingModel)?;
+        loaded.detect(text)
     }
 }
 
@@ -115,6 +126,104 @@ impl LoadedModel {
         let _model_size_bytes = self.model.size();
         status_for(Some(self.path.clone()), Some(self.load_ms))
     }
+
+    fn detect(&self, text: &str) -> Result<Vec<Finding>, ModelRuntimeError> {
+        let chunks = chunk_text_for_analysis(text, 2_000);
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let grammar = response_grammar().map_err(ModelRuntimeError::Grammar)?;
+        let prompt = build_prompt(&chunks);
+        let output = self.generate_json(&prompt, &grammar, 512)?;
+        let (findings, _warnings) =
+            parse_llm_response(&output, &chunks).map_err(ModelRuntimeError::Parse)?;
+        Ok(findings)
+    }
+
+    fn generate_json(
+        &self,
+        prompt: &str,
+        grammar: &str,
+        max_new_tokens: i32,
+    ) -> Result<String, ModelRuntimeError> {
+        let ctx_params =
+            LlamaContextParams::default().with_n_ctx(Some(NonZeroU32::new(4096).expect("nonzero")));
+        let mut ctx = self
+            .model
+            .new_context(&self.backend, ctx_params)
+            .map_err(|error| ModelRuntimeError::Context(error.to_string()))?;
+        let tokens = self
+            .model
+            .str_to_token(prompt, AddBos::Always)
+            .map_err(|error| ModelRuntimeError::Tokenize(error.to_string()))?;
+        if tokens.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut batch = LlamaBatch::new(tokens.len().max(512), 1);
+        let last_index = tokens.len() - 1;
+        for (index, token) in tokens.iter().copied().enumerate() {
+            batch
+                .add(token, index as i32, &[0], index == last_index)
+                .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
+        }
+        ctx.decode(&mut batch)
+            .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
+
+        let grammar_sampler =
+            LlamaSampler::grammar(&self.model, grammar, "root").map_err(|error| {
+                ModelRuntimeError::Grammar(format!("failed to initialize grammar sampler: {error}"))
+            })?;
+        let mut sampler = LlamaSampler::chain_simple([grammar_sampler, LlamaSampler::greedy()]);
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
+        let mut output = String::new();
+        let mut position = batch.n_tokens();
+
+        for _ in 0..max_new_tokens {
+            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+            sampler.accept(token);
+            if self.model.is_eog_token(token) {
+                break;
+            }
+            let piece = self
+                .model
+                .token_to_piece(token, &mut decoder, true, None)
+                .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
+            output.push_str(&piece);
+            batch.clear();
+            batch
+                .add(token, position, &[0], true)
+                .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
+            position += 1;
+            ctx.decode(&mut batch)
+                .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
+        }
+
+        Ok(output)
+    }
+}
+
+fn build_prompt(chunks: &[pseudo_core::chunking::TextChunk]) -> String {
+    let chunk_json = chunks
+        .iter()
+        .map(|chunk| {
+            serde_json::json!({
+                "chunkIndex": chunk.chunk_index,
+                "text": chunk.text,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        "You identify sensitive information in text for local pseudonymization. /no_think\n\
+Return only JSON matching the provided schema. Do not rewrite the text.\n\
+For each chunk, return exact substrings that appear in that chunk.\n\
+Sensitive types: PERSON_NAME, ORGANIZATION, ROLE_OR_POSITION, LOCATION, EMAIL, PHONE, DATE, ID_NUMBER, URL, OTHER_SENSITIVE.\n\
+Input chunks:\n{}\n\
+JSON:",
+        serde_json::to_string(&chunk_json).expect("chunk json serializes")
+    )
 }
 
 fn status_for(path: Option<PathBuf>, load_ms: Option<u64>) -> ModelStatus {
