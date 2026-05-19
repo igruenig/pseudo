@@ -69,7 +69,7 @@ impl ModelRuntime {
                 LlamaBackend::init().map_err(|error| ModelRuntimeError::Backend(error.to_string()))?;
             backend.void_logs();
             let model = {
-                let params = LlamaModelParams::default();
+                let params = model_params();
                 LlamaModel::load_from_file(&backend, &path, &params)
                     .map_err(|error| ModelRuntimeError::Load(error.to_string()))?
             };
@@ -231,8 +231,28 @@ fn status_for(path: Option<PathBuf>, load_ms: Option<u64>) -> ModelStatus {
         loaded: path.is_some(),
         model_path: path.map(|path| path.display().to_string()),
         quantization: Some("Q4_K_M".into()),
-        backend: ModelBackend::Cpu,
+        backend: runtime_backend(),
         load_ms,
         resident_memory_mb: None,
     }
+}
+
+#[cfg(target_os = "macos")]
+fn model_params() -> LlamaModelParams {
+    LlamaModelParams::default().with_n_gpu_layers(u32::MAX)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn model_params() -> LlamaModelParams {
+    LlamaModelParams::default()
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_backend() -> ModelBackend {
+    ModelBackend::Metal
+}
+
+#[cfg(not(target_os = "macos"))]
+fn runtime_backend() -> ModelBackend {
+    ModelBackend::Cpu
 }
