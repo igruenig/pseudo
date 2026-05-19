@@ -2,7 +2,7 @@
 
 ## 1. Product Goal
 
-Build a cross-platform desktop app with Tauri that helps users pseudonymize pasted text locally before sending it to an LLM. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
+Build a cross-platform desktop app with Tauri for professionals who handle confidential text and want to use AI without sending identifying details anywhere. Lawyers are the initial launch wedge, but the product should remain horizontal enough for therapists, HR teams, consultants, executives, researchers, and other privacy-sensitive professionals. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
 
 The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration, with the privacy promise reinforced by observable local behavior rather than heavy explanatory copy. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
 
@@ -14,10 +14,10 @@ Treat the deterministic/manual app as the real MVP, not as a degraded fallback. 
 
 The first launch should open into a usable deterministic/manual app, not a setup gate. If no model is installed, the user can still experience the core product immediately.
 
-1. App opens with a realistic legal-work sample already analyzed.
+1. App opens with a realistic confidential-work sample already analyzed. The initial sample can resemble a lawyer's intake note or settlement message, but product UI copy should not mention legal work, law firms, or lawyers.
 2. The first visible state shows highlighted original text, populated replacement groups, a rendered pseudonymized result, readiness summary, enabled `Copy result`, and clear action.
 3. The primary first-run action is `Try your own text`, which clears the sample and focuses the empty editor.
-4. The first-run trust strip uses user language: `Local only`, `Nothing saved`, and a neutral status such as `Basic detection active`. Avoid `deterministic mode` and avoid model-status language on the first screen.
+4. The first-run trust strip uses use-case language: `Use AI on confidential work`, `Nothing leaves this device`, `Nothing saved`, and a neutral status such as `Basic detection active`. Avoid `deterministic mode` and avoid model-status language on the first screen.
 5. After the pre-analyzed sample appears, show a subtle proof of locality such as `Analyzed in 230 ms · no network used`.
 6. The app does not show license activation, account creation, settings, model download, model status, upgrade banners, or sidecar setup as primary first-run actions.
 7. The UI explains model setup only after the user has successfully analyzed their own text at least once: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
@@ -34,7 +34,7 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 - Secondary review controls such as type filters, confidence badges, ignore actions, and reset-to-suggested should be progressively disclosed rather than visible by default on first launch.
 - Warnings should be concise and actionable. Avoid confidence-killing global disclaimers before the user has seen the workflow.
 - Any model-download or license prompt should appear only after a successful analysis on the user's own text, not after the built-in sample alone.
-- When the user clears the sample, the empty editor placeholder should say: `Paste any text. Nothing leaves this device.`
+- When the user clears the sample, the empty editor placeholder should say: `Paste confidential text. Nothing leaves this device.`
 - Copy confirmation should be a transient toast, not a modal, with specific reassurance: `Pseudonymized text copied · original stayed on this device`.
 
 ### Working Flow
@@ -57,6 +57,12 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 10. The pseudonymized preview updates immediately after each replacement edit or toggle.
 11. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
 12. User copies the final text and sees `Pseudonymized text copied · original stayed on this device`.
+
+### Voice and Copy Principles
+
+- Lead with the use case, not the implementation: help people use AI on confidential work without exposing identities.
+- Use plain language over technical jargon, and prefer observable behavior over broad privacy claims.
+- Never apologize for the Free tier, make the app feel incomplete, or pressure the user to upgrade.
 
 ## 3. Initial Sensitive Information Types
 
@@ -398,7 +404,7 @@ Left pane states:
 - Pseudonymized preview generated immediately after analysis
 - Error state
 
-The empty input placeholder should say: `Paste any text. Nothing leaves this device.`
+The empty input placeholder should say: `Paste confidential text. Nothing leaves this device.`
 
 Right pane states:
 
@@ -454,9 +460,21 @@ async fn get_license_status() -> Result<LicenseStatus, AppError>;
 
 #[tauri::command]
 async fn activate_license(license_key: String) -> Result<LicenseStatus, AppError>;
+
+#[tauri::command]
+async fn get_audit_log_status() -> Result<AuditLogStatus, AppError>;
+
+#[tauri::command]
+async fn record_analysis_event(event: AnalysisAuditEvent) -> Result<(), AppError>;
 ```
 
 The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings and groups. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result.
+
+`LicenseStatus` should distinguish `Free`, `Trial`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include an expiry timestamp and must transition to `Free` on expiry rather than locking the app. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
+
+`get_audit_log_status` and `record_analysis_event` support Firm and Enterprise tiers only. They must be license-gated and metadata-only: never source text, never finding surface forms, never replacement maps, and never pseudonymized output.
+
+`AuditLogStatus` should include whether audit logging is licensed, enabled, locally stored, admin-sync enabled, and the current retention window. It should not expose content paths or any data derived from source text.
 
 ## 11. Python Sidecar Service
 
@@ -519,7 +537,7 @@ The model-license check is load-bearing. For any named model, including Qwen 1.7
 
 ### Model Download Manager
 
-For the lawyer-facing demo and future sales flow, keep the app installer small and download the model after install:
+For the initial professional-facing demo and future sales flow, keep the app installer small and download the model after install:
 
 - open first launch into the already-analyzed deterministic/manual sample even when no model is found
 - offer model setup from settings and a post-analysis upgrade prompt only after the user has analyzed their own text
@@ -533,23 +551,42 @@ For the lawyer-facing demo and future sales flow, keep the app installer small a
 - avoid sending pasted/user text during setup, activation, or update checks
 - verify commercial redistribution and hosted-download rights for the selected model before distributing outside private demos
 
-## 12. Commercial Demo, Trial, and Free Version
+## 12. Commercial Demo, Trial, and Pricing
 
-The sales/demo experience should optimize for trust and time-to-value: install quickly, show a useful deterministic result immediately, make setup understandable, and avoid sending client text anywhere.
+The sales/demo experience should optimize for trust and time-to-value for professionals who handle confidential text: install quickly, show a useful deterministic result immediately, make setup understandable, and avoid sending private work anywhere. Lawyers are the initial go-to-market wedge, but pricing and product language should remain horizontal.
 
 Recommended packaging:
 
 - Small installer that includes the app shell, deterministic detectors, manual marking, and model download manager.
-- First launch opens into the working deterministic/manual app with an already-analyzed legal-work sample, before/after preview, trust/status strip, replacement review, locality proof, and copy behavior.
+- First launch opens into the working deterministic/manual app with an already-analyzed confidential-work sample, before/after preview, trust/status strip, replacement review, locality proof, and copy behavior.
 - Guided local model setup is offered only after explicit user approval, preferably after the user has seen deterministic analysis results on their own text.
 - Full local processing after the model is installed.
-- Clear status in settings or post-own-text analysis states: `Basic detection active`, `Downloading model`, `Local model ready`, `Trial expired`, or `Licensed`.
+- Clear status in settings or post-own-text analysis states: `Basic detection active`, `Downloading model`, `Local model ready`, `Trial active`, `Trial expired`, `Pro`, `Firm`, or `Enterprise`.
 
-Recommended trial/free strategy:
+### Pricing Tiers
 
-- Free version: deterministic detectors, manual marking, replacement review, and copy/export for short text. This is useful forever and demonstrates privacy even without the model.
-- Trial version: time-limited full LLM-assisted experience, such as 14 days, with no document upload and no watermark in copied text. This is best for a lawyer evaluating real workflows.
-- Paid version: unlimited local LLM-assisted analysis, commercial support, model/settings management, and later document-format support.
+- Free, forever: deterministic detectors, manual marking, replacement review, unlimited text length, unlimited use, and copy/export. Explicit non-goal: never make Free worse to push upgrades.
+- Pro: `$12/month`, `$120/year`, or `$199 perpetual`, single user. Includes LLM-assisted detection, model setup and updates, and the full review workflow. Perpetual licenses include 12 months of updates; optional maintenance renewal, roughly `$49/year`, keeps updates active after that. Offer subscription and perpetual options side by side at checkout.
+- Firm: `$25/user/month` or roughly `$240/user/year`. Includes centralized license management, admin console, priority support, metadata-only audit log, and a commercial agreement suitable for procurement.
+- Enterprise: custom pricing. Includes SSO, on-prem license server, custom audit-log retention policies, security questionnaires, deployment support, and procurement/security review.
+
+Firm and Enterprise should be possible in the architecture but absent from Phase 1 UI. Do not let multi-user administration, audit logs, procurement workflows, or SSO leak into the first single-user product.
+
+### Trial Mechanics
+
+- Trial lasts 14 days and unlocks Pro features.
+- No credit card is required to start a trial.
+- Trial expiry transitions the app to Free tier rather than locking the user out.
+- Trial expiry must call into the same license state transition system as paid license changes so the fallback behavior is tested and reliable.
+
+### What We Will Not Do
+
+- No usage-based pricing.
+- No analytics or telemetry.
+- No ads.
+- No credit card required for trial.
+- No Free tier degradation over time.
+- No app-store distribution initially.
 
 Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never pasted text, extracted findings, replacement maps, or pseudonymized results. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
 
@@ -566,10 +603,36 @@ The app should avoid asking for license activation before the user has interacte
 - Do not send pasted text, findings, replacement maps, or pseudonymized output during license activation, model download, or update checks.
 - `pseudo-core` must make no network calls of any kind. It must not include update checks, license checks, model downloads, crash reporting, telemetry, HTTP clients, socket clients, or sidecar IPC.
 - All network activity must live in the outer app/runtime crates and be auditable at that boundary.
+- Firm and Enterprise audit logging records metadata only: timestamp, local user identifier, analysis duration, finding count, and finding types as aggregate counts. It must never record source text, finding surface forms, replacement maps, or pseudonymized output.
+- Audit log storage is local to each user's machine by default. Admin-console sync, when enabled, should sync aggregate metadata only and never content.
+- Audit logging is configurable by the firm admin and can be fully disabled. The product must continue working without it.
 - Sidecar service should bind only to `127.0.0.1`.
 - Use a random local port or authenticated local token if the sidecar exposes HTTP.
 - Clear in-memory state when the user clicks `Clear`.
-- Document that the app assists pseudonymization but does not guarantee legal anonymization.
+- Document that the app assists pseudonymization but does not guarantee formal anonymization for every regulatory or professional standard.
+
+Audit event schema:
+
+```ts
+type AnalysisAuditEvent = {
+  id: string;
+  occurredAt: string;
+  localUserId: string;
+  licenseTier: "FIRM" | "ENTERPRISE";
+  analysisDurationMs: number;
+  findingCount: number;
+  findingTypeCounts: Record<SensitiveType, number>;
+  engineMode: "BASIC" | "LOCAL_MODEL";
+};
+```
+
+Explicitly not recorded:
+
+- source text
+- exact finding text
+- replacement map
+- pseudonymized result
+- file names or document titles unless a future admin setting explicitly enables them
 
 ## 14. Project Structure
 
@@ -600,6 +663,13 @@ pseudo/
         tauriApi.ts
         licenseStatus.ts
         modelStatus.ts
+    admin/
+      AdminApp.tsx
+      components/
+        LicenseSeatTable.tsx
+        AuditLogSummary.tsx
+      lib/
+        adminApi.ts
   src-tauri/
     Cargo.toml
     tauri.conf.json
@@ -625,6 +695,7 @@ pseudo/
         commands.rs
         analysis.rs
         license.rs
+        audit_log.rs
         model_download.rs
         model_service.rs
   sidecar/
@@ -638,6 +709,8 @@ pseudo/
 This repository currently contains the plan at the root. Once the app scaffold exists, move or copy this document to `docs/implementation-plan.md`.
 
 `pseudo-core` should be independently buildable and testable. The Tauri app crate and `pseudo-cli` should depend on it as consumers rather than duplicating deterministic logic. The CLI should be usable in CI for end-to-end deterministic analysis tests without launching the desktop UI.
+
+The admin console path is reserved for Firm and Enterprise tiers, but it should not be built in Phase 1. It can begin as a separate frontend bundle under `src/admin/` and later move to a web-based dashboard that talks to an on-prem license server for Enterprise deployments.
 
 ## 15. Testing Plan
 
@@ -676,8 +749,8 @@ Python:
 
 ### Integration Tests
 
-- fresh install, no model, no license: open app and immediately see an already-analyzed legal-work sample with highlights, grouped replacements, before/after preview, readiness summary, locality proof, and enabled `Copy result`
-- click `Try your own text`, clear the sample, focus the editor, and show `Paste any text. Nothing leaves this device.`
+- fresh install, no model, no license: open app and immediately see an already-analyzed confidential-work sample with highlights, grouped replacements, before/after preview, readiness summary, locality proof, and enabled `Copy result`
+- click `Try your own text`, clear the sample, focus the editor, and show `Paste confidential text. Nothing leaves this device.`
 - paste sample text
 - run deterministic-only analysis on user-provided text without model setup
 - run deterministic-only analysis
@@ -720,8 +793,8 @@ Expected groups:
 - Create `pseudo-cli` as a thin wrapper around `pseudo-core` for UI-free deterministic analysis and integration tests
 - Add `cargo deny` with permissive-license policy for `pseudo-core`
 - Build a polished first-launch before/after demo layout with a compact trust/status strip: `Local only`, `Nothing saved`, `Basic detection active`, and `Clear`
-- Add preloaded legal-work sample text that opens already analyzed using a bundled verified replacement map
-- Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste any text. Nothing leaves this device.`
+- Add preloaded confidential-work sample text that opens already analyzed using a bundled verified replacement map
+- Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste confidential text. Nothing leaves this device.`
 - Hide license activation, account creation, settings, model download, model status, upgrade banners, and sidecar setup from the primary first-run path
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
@@ -783,24 +856,45 @@ Deliverable: an auditable deterministic engine and CLI that security teams can i
 
 - Bundle Python sidecar or provide managed runtime setup
 - Keep installer small by excluding the model from the app bundle
+- Distribute through direct download from the product website with signed installers for macOS, Windows, and Linux
+- Do not use app stores in v1 because of the revenue cut, sidecar/sandboxing constraints, and reduced ability to communicate directly with buyers
 - Add model download/update/delete settings
 - Add model path settings screen
-- Add privacy-preserving trial/license activation
+- Add privacy-preserving trial/license activation for Free, Trial, Pro subscription, Pro perpetual, Firm, and Enterprise states
+- Add subscription and perpetual license infrastructure, including perpetual maintenance windows and update eligibility
+- Add trial-to-Free fallback logic so expiry never locks the user out
+- Add metadata-only analysis event recording behind Firm/Enterprise license gates
 - Add platform-specific packaging notes for macOS, Windows, and Linux
 - Validate offline startup
 - Validate no user text appears in logs
 
-Deliverable: installable cross-platform desktop app suitable for lawyer-facing demos.
+Deliverable: installable cross-platform desktop app suitable for confidential-work professionals and the initial lawyer wedge.
 
-### Phase 5: Advanced Features
+### Phase 5: Firm and Advanced Features
 
 - Export pseudonymization map
 - Import/export replacement presets
 - Project/session save with explicit user consent
 - Support structured documents
-- Paid team or firm license management
+- Admin console
+- Multi-user license management
+- Audit log viewer for firm admins, using metadata-only events
+- Priority support tooling
 - Optional stronger local NER model or fine-tuned classifier
 - Optional native Rust inference runtime
+
+Deliverable: Firm-ready product with centralized license management and auditability without content collection.
+
+### Phase 6: Enterprise
+
+- SSO integration
+- On-prem license server
+- Deployment scripts and IT packaging guidance
+- Custom audit-log retention controls
+- Security questionnaire support
+- Hardened admin controls for large deployments
+
+Deliverable: Enterprise deployment path for organizations that need procurement, identity, and on-prem controls.
 
 ## 17. Key Risks and Mitigations
 
@@ -844,6 +938,24 @@ Mitigation:
 - Keep deterministic/manual functionality available without activation
 - Verify model license and hosted-download rights before public/commercial distribution
 
+### Free Tier Cannibalizes Paid
+
+Mitigation:
+
+- Keep Free genuinely useful rather than degrading it artificially
+- Make paid genuinely more thorough with local LLM detection for names, organizations, roles, and context-sensitive spans that regex cannot reliably catch
+- Communicate the difference honestly: Free helps quickly, Pro catches more subtle identifying context
+- For the initial buyer, a single missed client name can be high consequence, so the paid upgrade has real value without crippling Free
+
+### Pricing Is Wrong on Launch
+
+Mitigation:
+
+- Launch with the suggested numbers and expect to revisit them
+- Instrument nothing, because telemetry conflicts with the privacy positioning
+- Talk directly to the first dozen paying customers and adjust within the first 90 days
+- Do not run pricing A/B tests early; there is not enough statistical power, and the infrastructure creates privacy and trust costs
+
 ### Core Becomes Hard to Open-Source Later
 
 Mitigation:
@@ -869,7 +981,7 @@ Mitigation:
 1. Scaffold Tauri + React + TypeScript project.
 2. Create a Rust workspace with `pseudo-core`, `pseudo-cli`, and the Tauri app crate.
 3. Add `cargo deny` with permissive-license policy for `pseudo-core`.
-4. Build the first-run shell: pre-analyzed legal-work sample, trust/status strip, before/after layout, replacement panel, enabled `Copy result`, `Try your own text`, and clear action.
+4. Build the first-run shell: pre-analyzed confidential-work sample, trust/status strip, before/after layout, replacement panel, enabled `Copy result`, `Try your own text`, and clear action.
 5. Implement shared TypeScript types in `src/lib/core` plus bundled sample findings/mock analysis results to perfect highlights, replacement rows, readiness summary, locality proof, copy confirmation, and empty/no-findings/error states.
 6. Implement `pseudo-core` grouping and range-based replacement utilities.
 7. Add deterministic detectors in `pseudo-core` and wire them through a Tauri command.
@@ -880,3 +992,5 @@ Mitigation:
 12. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
 13. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis on their own text.
 14. Add the Python sidecar after the deterministic review workflow feels solid.
+15. Write the licensing state machine in Rust before adding paid features: `Free`, `Trial` with expiry timestamp, `ProSubscription` with renewal date, `ProPerpetual` with maintenance-active flag and update-eligible-until date, `Firm`, and `Enterprise`.
+16. Draft the audit log schema and explicit list of fields recorded and not recorded as a privacy commitment document that ships with the product.
