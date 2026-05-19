@@ -271,6 +271,18 @@ type ReplacementMemory = {
 
 `pseudonymizedText` is a derived value produced from the current text and enabled replacement groups. The Rust backend should be the canonical owner of validation, grouping, overlap resolution, and range-based replacement. The frontend may recompute an optimistic live preview for responsiveness only while in `ANALYZED_READY`, but final copy/export actions should use backend-confirmed output.
 
+### Preview Sync Strategy
+
+Phase 1 uses pure-frontend optimistic preview for replacement edits.
+
+- Replacement field edits and enable/disable toggles update the preview synchronously in frontend state. Do not debounce these updates; the local range-based algorithm should be fast enough for each keystroke.
+- Do not call backend recomputation on every replacement edit or toggle.
+- Backend recomputation happens for `analyze_text`, manual finding changes, explicit reset/recompute actions, and final `Copy result`.
+- `Copy result` calls `apply_replacements` with current text, expected text hash, and current replacement groups, then copies only the backend-confirmed output.
+- If backend-confirmed output differs from the optimistic preview, replace the preview with the backend result, copy the backend result, and show a non-blocking note such as `Copied backend-verified result`.
+- If backend returns a stale hash error, do not copy. Move to `DIRTY_NEEDS_ANALYSIS` and show `Analyze again before copying`.
+- Analysis-style requests carry a monotonically increasing frontend `requestId`. The frontend must ignore any response whose `requestId` is older than the latest request for the current text hash.
+
 ## 7. Detection Strategy
 
 Use a hybrid pipeline instead of relying only on the LLM.
@@ -512,7 +524,7 @@ Example: if `Jane Doe` is first assigned `[PERSON_1]`, then the user edits text 
 
 ### Applying Replacements
 
-Apply replacements automatically after every completed analysis and after every user edit to the replacement map. The canonical implementation should live in Rust and apply by sorted character ranges, from end to start, not by naive global string replacement. This prevents accidental changes to text outside confirmed spans and preserves offsets during replacement.
+Apply replacements automatically in the preview after every completed analysis and after every user edit to the replacement map. The canonical implementation should live in Rust and apply by sorted character ranges, from end to start, not by naive global string replacement. The frontend mirrors that algorithm for optimistic preview only while in `ANALYZED_READY`. This prevents accidental changes to text outside confirmed spans and preserves offsets during replacement.
 
 The frontend may run the same deterministic algorithm for immediate preview updates while in `ANALYZED_READY`, but the backend remains the source of truth. Before copying or exporting, ask the backend to recompute the pseudonymized result from the current source text, expected text hash, and replacement groups.
 
@@ -586,16 +598,16 @@ Initial command surface:
 
 ```rust
 #[tauri::command]
-async fn analyze_text(text: String) -> Result<AnalysisResult, AppError>;
+async fn analyze_text(request_id: String, text: String) -> Result<AnalysisResult, AppError>;
 
 #[tauri::command]
 async fn apply_replacements(text: String, expected_text_hash: String, groups: Vec<ReplacementGroup>) -> Result<String, AppError>;
 
 #[tauri::command]
-async fn create_manual_finding(text: String, start: usize, end: usize, type_: SensitiveType) -> Result<Finding, AppError>;
+async fn create_manual_finding(request_id: String, text: String, start: usize, end: usize, type_: SensitiveType) -> Result<Finding, AppError>;
 
 #[tauri::command]
-async fn recompute_analysis(text: String, expected_text_hash: String, findings: Vec<Finding>, groups: Vec<ReplacementGroup>, replacement_memory: ReplacementMemory) -> Result<AnalysisResult, AppError>;
+async fn recompute_analysis(request_id: String, text: String, expected_text_hash: String, findings: Vec<Finding>, groups: Vec<ReplacementGroup>, replacement_memory: ReplacementMemory) -> Result<AnalysisResult, AppError>;
 
 #[tauri::command]
 async fn get_model_status() -> Result<ModelStatus, AppError>;
@@ -628,7 +640,7 @@ async fn get_audit_log_status() -> Result<AuditLogStatus, AppError>;
 async fn record_analysis_event(event: AnalysisAuditEvent) -> Result<(), AppError>;
 ```
 
-The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits while in `ANALYZED_READY`. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, session `ReplacementMemory`, and expected text hash. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result. Backend commands that depend on a prior analysis must reject mismatched `expected_text_hash`.
+The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits while in `ANALYZED_READY`. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, session `ReplacementMemory`, and expected text hash. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result. Backend commands that depend on a prior analysis must reject mismatched `expected_text_hash`. `request_id` is echoed back by the frontend command wrapper or response envelope so stale responses can be ignored.
 
 `LicenseStatus` should distinguish `Free`, `Trial`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include an expiry timestamp and must transition to `Free` on expiry rather than locking the app. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
 
@@ -888,6 +900,9 @@ Frontend:
 - newly inserted earlier findings do not renumber existing remembered replacements
 - exact-normalized grouping does not merge aliases such as `Jane`, `Jane Doe`, and `Ms. Doe` in Phase 1
 - optimistic pseudonymized preview generation after analysis
+- replacement edits and toggles update optimistic preview synchronously without backend calls
+- final copy reconciles optimistic preview with backend-confirmed output
+- stale analysis/manual/recompute responses are ignored by `requestId`
 - disabled replacements are skipped
 - selection-to-manual-finding UI behavior
 - `src/lib/core` utilities remain pure and do not import Tauri/app glue
@@ -932,6 +947,8 @@ Python:
 - mark selected text as sensitive
 - edit replacement
 - verify pseudonymized preview updates automatically after replacement edits while in `ANALYZED_READY`
+- verify replacement edits do not call backend recomputation until copy/reset/manual-marking
+- verify older in-flight analysis responses are ignored when a newer request has started
 - verify readiness summary reflects enabled, disabled, ignored, and review-needed findings
 - copy backend-confirmed final result and show `Pseudonymized text copied · no text or results sent`
 - optional model download completes and enables local LLM analysis
