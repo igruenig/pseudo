@@ -8,9 +8,12 @@ use llama_cpp_2::{
     llama_backend::LlamaBackend,
     model::{params::LlamaModelParams, LlamaModel},
 };
+use pseudo_core::chunking::chunk_text_for_analysis;
 use pseudo_core::{Finding, ModelBackend, ModelStatus};
 use thiserror::Error;
 use tokio::sync::Mutex;
+
+use crate::llm_output::response_grammar;
 
 #[derive(Default)]
 pub struct ModelRuntime {
@@ -32,6 +35,8 @@ pub enum ModelRuntimeError {
     Backend(String),
     #[error("Failed to load local model: {0}")]
     Load(String),
+    #[error("Failed to build model output grammar: {0}")]
+    Grammar(String),
 }
 
 impl ModelRuntime {
@@ -86,6 +91,8 @@ impl ModelRuntime {
         if self.state.lock().await.is_none() {
             self.load().await?;
         }
+        let _grammar = response_grammar().map_err(ModelRuntimeError::Grammar)?;
+        let _chunks = chunk_text_for_analysis(_text, 2_000);
         // The next implementation slice creates a context, applies the JSON grammar,
         // and converts model-returned surface forms into source ranges.
         Ok(Vec::new())
