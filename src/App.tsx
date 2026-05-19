@@ -253,8 +253,8 @@ export default function App() {
         manualType
       );
       const findings = [...result.findings, finding];
-      const { rebuildGroupsPreservingEdits } = await import("./lib/core/replacements");
-      const nextGroups = rebuildGroupsPreservingEdits(findings, groups);
+      const { buildGroups } = await import("./lib/core/replacements");
+      const nextGroups = buildGroups(findings);
       const nextResult = await recomputeAnalysis(
         crypto.randomUUID(),
         text,
