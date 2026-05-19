@@ -321,10 +321,14 @@ export default function App() {
                     toggleGroup(segment.group.id);
                     setManualSelection(null);
                   }}
-                  title={`${segment.originalText} · ${segment.finding.type} · click to ${segment.group.enabled ? "keep original" : "replace"}`}
+                  aria-label={`${segment.group.enabled ? "Remove" : "Restore"} replacement for ${segment.originalText}`}
+                  title={`${segment.originalText} · ${segment.finding.type} · click to ${segment.group.enabled ? "remove replacement" : "restore replacement"}`}
                   type="button"
                 >
-                  {segment.displayText}
+                  <span>{segment.displayText}</span>
+                  <span aria-hidden="true" className="chip-action">
+                    {segment.group.enabled ? "x" : "+"}
+                  </span>
                 </button>
               );
             })}

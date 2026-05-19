@@ -120,10 +120,12 @@ button.primary {
 }
 
 .entity-chip {
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
   height: auto;
   margin: 0 1px;
-  padding: 2px 7px 3px;
+  padding: 2px 5px 3px 7px;
   border-radius: 5px;
   font-size: 0.92em;
   line-height: 1.25;
@@ -132,10 +134,25 @@ button.primary {
   -webkit-box-decoration-break: clone;
 }
 
+.chip-action {
+  display: inline-grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .entity-chip.enabled {
   border-color: #9fb8ad;
   background: #e5f0eb;
   color: #173d34;
+}
+
+.entity-chip.enabled .chip-action {
+  background: rgba(23, 61, 52, 0.12);
 }
 
 .entity-chip.disabled {
@@ -145,6 +162,11 @@ button.primary {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
+}
+
+.entity-chip.disabled .chip-action {
+  background: rgba(108, 98, 82, 0.12);
+  text-decoration: none;
 }
 
 .entity-chip.needs-review {
