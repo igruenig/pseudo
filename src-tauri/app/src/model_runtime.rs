@@ -18,7 +18,7 @@ use pseudo_core::{Finding, ModelBackend, ModelStatus};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::llm_output::{parse_llm_response, response_grammar};
+use crate::llm_output::parse_llm_response;
 
 #[derive(Default)]
 pub struct ModelRuntime {
@@ -40,8 +40,6 @@ pub enum ModelRuntimeError {
     Backend(String),
     #[error("Failed to load local model: {0}")]
     Load(String),
-    #[error("Failed to build model output grammar: {0}")]
-    Grammar(String),
     #[error("Failed to create llama.cpp context: {0}")]
     Context(String),
     #[error("Failed to tokenize prompt: {0}")]
@@ -133,9 +131,8 @@ impl LoadedModel {
             return Ok(Vec::new());
         }
 
-        let grammar = response_grammar().map_err(ModelRuntimeError::Grammar)?;
         let prompt = build_prompt(&chunks);
-        let output = self.generate_json(&prompt, &grammar, 512)?;
+        let output = self.generate_json(&prompt, 512)?;
         let (findings, _warnings) =
             parse_llm_response(&output, &chunks).map_err(ModelRuntimeError::Parse)?;
         Ok(findings)
@@ -144,7 +141,6 @@ impl LoadedModel {
     fn generate_json(
         &self,
         prompt: &str,
-        grammar: &str,
         max_new_tokens: i32,
     ) -> Result<String, ModelRuntimeError> {
         let ctx_params =
@@ -171,11 +167,7 @@ impl LoadedModel {
         ctx.decode(&mut batch)
             .map_err(|error| ModelRuntimeError::Decode(error.to_string()))?;
 
-        let grammar_sampler =
-            LlamaSampler::grammar(&self.model, grammar, "root").map_err(|error| {
-                ModelRuntimeError::Grammar(format!("failed to initialize grammar sampler: {error}"))
-            })?;
-        let mut sampler = LlamaSampler::chain_simple([grammar_sampler, LlamaSampler::greedy()]);
+        let mut sampler = LlamaSampler::greedy();
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut output = String::new();
         let mut position = batch.n_tokens();
@@ -255,4 +247,25 @@ fn runtime_backend() -> ModelBackend {
 #[cfg(not(target_os = "macos"))]
 fn runtime_backend() -> ModelBackend {
     ModelBackend::Cpu
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "loads the local Qwen GGUF model"]
+    fn detects_with_local_model() {
+        tauri::async_runtime::block_on(async {
+            let runtime = ModelRuntime::default();
+            let result = crate::analysis::analyze(
+                "smoke".into(),
+                "Jane Doe emailed jane.doe@example.com about ACME AG.".into(),
+                &runtime,
+            )
+            .await;
+            assert_eq!(result.request_id, "smoke");
+            assert!(!result.pseudonymized_text.is_empty());
+        });
+    }
 }

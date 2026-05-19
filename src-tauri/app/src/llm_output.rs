@@ -72,6 +72,7 @@ pub fn response_grammar() -> Result<String, String> {
 }
 
 pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Finding>, Vec<String>), String> {
+    let json = extract_json_object(json).ok_or_else(|| "LLM did not return a JSON object".to_string())?;
     let response: LlmResponse = serde_json::from_str(json).map_err(|error| error.to_string())?;
     let mut findings = Vec::new();
     let mut warnings = response.warnings;
@@ -107,6 +108,41 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
     }
 
     Ok((findings, warnings))
+}
+
+fn extract_json_object(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|byte| *byte == b'{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, byte) in bytes[start..].iter().copied().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return text.get(start..start + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -148,5 +184,22 @@ mod tests {
         let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
         assert!(findings.is_empty());
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn extracts_json_from_surrounding_text() {
+        let source = "Jane called.";
+        let chunks = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: source.len(),
+            text: source.into(),
+        }];
+        let json = r#"Here is JSON:
+{"findings":[{"chunkIndex":0,"text":"Jane","type":"PERSON_NAME","confidence":0.82}]}
+done"#;
+        let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(findings.len(), 1);
     }
 }
