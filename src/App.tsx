@@ -4,7 +4,7 @@ import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
 import { buildInlineSegments } from "./lib/core/inlineSegments";
 import { stringIndexToByteOffset } from "./lib/core/offsets";
-import { hashText, readinessLabel } from "./lib/core/state";
+import { readinessLabel } from "./lib/core/state";
 import type { AnalysisResult, AnalysisStateName, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType } from "./lib/core/types";
 import "./styles.css";
 
@@ -14,6 +14,7 @@ type ManualSelection = FloatingPoint & { start: number; end: number };
 
 export default function App() {
   const [text, setText] = useState("");
+  const [analyzedText, setAnalyzedText] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [groups, setGroups] = useState<ReplacementGroup[]>([]);
   const [busy, setBusy] = useState(false);
@@ -32,9 +33,9 @@ export default function App() {
     if (busy) return "ANALYZING";
     if (error) return "ERROR";
     if (!text.trim()) return "EMPTY";
-    if (!result || result.sourceTextHash !== hashText(text)) return "DIRTY_NEEDS_ANALYSIS";
+    if (!result || analyzedText !== text) return "DIRTY_NEEDS_ANALYSIS";
     return "ANALYZED_READY";
-  }, [busy, error, result, text]);
+  }, [analyzedText, busy, error, result, text]);
 
   const inlineSegments = useMemo(() => buildInlineSegments(text, result, groups), [groups, result, text]);
   const readiness = readinessLabel(state, result, groups);
@@ -70,6 +71,7 @@ export default function App() {
       const next = await analyzeText(requestId, text);
       setResult(next);
       setGroups(next.groups);
+      setAnalyzedText(text);
       setSelectedGroupId(null);
       setManualSelection(null);
       await refreshModel();
@@ -108,6 +110,7 @@ export default function App() {
 
   function handleClear() {
     setText("");
+    setAnalyzedText(null);
     setResult(null);
     setGroups([]);
     setError(null);
@@ -117,6 +120,7 @@ export default function App() {
   }
 
   function handleEditText() {
+    setAnalyzedText(null);
     setResult(null);
     setGroups([]);
     setSelectedGroupId(null);
