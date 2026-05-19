@@ -209,10 +209,13 @@ fn build_prompt(chunks: &[pseudo_core::chunking::TextChunk]) -> String {
 
     format!(
         "<|im_start|>system\n\
-You extract sensitive spans for local pseudonymization. Return JSON only. Do not explain.\n\
+You extract sensitive spans for local pseudonymization from English, German, French, and mixed-language text. Return JSON only. Do not explain.\n\
 Every finding text must be an exact substring copied from the input chunk.\n\
 Do not infer hidden values. Do not extract parts inside an email if the full email is already extracted.\n\
+Always extract visible personal names, including names with accents or non-English characters.\n\
+Always extract cities, countries, venues, and named events when they identify context.\n\
 Detect organizations, including company names with legal suffixes such as AG, GmbH, Ltd, LLC, Inc, SA, or BV.\n\
+Do not extract standalone ordinal/cardinal numbers, generic nouns, broad topic words, or descriptive nouns such as Milliardär unless they are part of a longer identifying title/name span.\n\
 Valid types: PERSON_NAME, ORGANIZATION, ROLE_OR_POSITION, LOCATION, EMAIL, PHONE, DATE, ID_NUMBER, URL, OTHER_SENSITIVE.\n\
 Required output shape: {{\"findings\":[{{\"chunkIndex\":0,\"text\":\"Jane Doe\",\"type\":\"PERSON_NAME\",\"confidence\":0.90}},{{\"chunkIndex\":0,\"text\":\"ACME AG\",\"type\":\"ORGANIZATION\",\"confidence\":0.85}}]}}\n\
 If there are no findings, return {{\"findings\":[]}}.\n\
@@ -267,15 +270,16 @@ mod tests {
     fn detects_with_local_model() {
         tauri::async_runtime::block_on(async {
             let runtime = ModelRuntime::default();
-            let text = "Jane Doe from ACME AG emailed jane.doe@example.com about a meeting with Dr. Peter Keller in Zurich.";
+            let text = "In Cannes laufen die 79. Internationalen Filmfestspiele. Neben dem üblichen Glamour und den vielen Talenten sorgen dieses Jahr auch polarisierende Themen für Schlagzeilen. Die Debatte um den ultrakonservativen Milliardär Vincent Bolloré und dessen Einfluss auf die Kulturszene geht in eine neue Runde.";
             let result = crate::analysis::analyze("smoke".into(), text.into(), &runtime)
             .await;
             assert_eq!(result.request_id, "smoke");
-            assert!(result.findings.iter().any(|finding| finding.text == "Jane Doe"));
-            assert!(result.findings.iter().any(|finding| finding.text == "ACME AG"));
-            assert!(result.findings.iter().any(|finding| finding.text == "jane.doe@example.com"));
-            assert!(result.findings.iter().any(|finding| finding.text == "Dr. Peter Keller"));
-            assert!(result.findings.iter().any(|finding| finding.text == "Zurich"));
+            assert!(result.findings.iter().any(|finding| finding.text == "Vincent Bolloré"));
+            assert!(result.findings.iter().any(|finding| finding.text == "Cannes"));
+            assert!(!result.findings.iter().any(|finding| finding.text == "79."));
+            assert!(!result.findings.iter().any(|finding| finding.text == "Filmfestspiele"));
+            assert!(!result.findings.iter().any(|finding| finding.text == "Milliardär"));
+            assert!(!result.findings.iter().any(|finding| finding.text == "Kulturszene"));
         });
     }
 }

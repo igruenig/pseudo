@@ -20,6 +20,7 @@ pub struct LlmResponse {
 pub struct LlmFinding {
     pub chunk_index: usize,
     pub text: String,
+    #[serde(deserialize_with = "deserialize_sensitive_type")]
     pub r#type: SensitiveType,
     #[serde(default)]
     pub confidence: Option<f32>,
@@ -118,6 +119,10 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
             warnings.push("LLM returned an empty finding".into());
             continue;
         }
+        if should_discard_likely_generic(&item) {
+            warnings.push(format!("Discarded `{}`: likely generic, non-identifying text", item.text));
+            continue;
+        }
         let mut matched = false;
         for relative_start in surface_matches(&chunk.text, &item.text) {
             matched = true;
@@ -140,6 +145,26 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
     }
 
     Ok((findings, warnings))
+}
+
+fn should_discard_likely_generic(item: &LlmFinding) -> bool {
+    let text = item.text.trim();
+    if text.is_empty() {
+        return true;
+    }
+
+    if item.r#type == SensitiveType::Date
+        && text
+            .chars()
+            .all(|character| character.is_ascii_digit() || matches!(character, '.' | ',' | ' '))
+        && text.chars().filter(|character| character.is_ascii_digit()).count() <= 2
+    {
+        return true;
+    }
+
+    item.r#type == SensitiveType::OtherSensitive
+        && text.split_whitespace().count() == 1
+        && text.chars().all(|character| character.is_alphabetic())
 }
 
 impl<'de> Deserialize<'de> for LegacyFinding {
@@ -176,9 +201,17 @@ fn parse_sensitive_type(value: &str) -> Result<SensitiveType, String> {
         "DATE" => Ok(SensitiveType::Date),
         "ID" | "ID_NUMBER" | "IDENTIFIER" => Ok(SensitiveType::IdNumber),
         "URL" | "LINK" | "WEBSITE" => Ok(SensitiveType::Url),
-        "OTHER" | "OTHER_SENSITIVE" | "SENSITIVE" => Ok(SensitiveType::OtherSensitive),
+        "EVENT" | "OTHER" | "OTHER_SENSITIVE" | "SENSITIVE" => Ok(SensitiveType::OtherSensitive),
         other => Err(format!("unknown sensitive type `{other}`")),
     }
+}
+
+fn deserialize_sensitive_type<'de, D>(deserializer: D) -> Result<SensitiveType, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    parse_sensitive_type(&value).map_err(de::Error::custom)
 }
 
 fn surface_matches(haystack: &str, needle: &str) -> Vec<usize> {
@@ -305,5 +338,21 @@ done"#;
         assert_eq!(findings[1].start, 44);
         assert_eq!(findings[1].end, 51);
         assert_eq!(warnings, vec!["Adapted non-schema LLM output"]);
+    }
+
+    #[test]
+    fn discards_generic_single_word_other_sensitive_and_ordinal_dates() {
+        let source = "In Cannes laufen die 79. Internationalen Filmfestspiele. Vincent Bolloré sprach.";
+        let chunks = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: source.len(),
+            text: source.into(),
+        }];
+        let json = r#"{"findings":[{"chunkIndex":0,"text":"79.","type":"DATE","confidence":0.85},{"chunkIndex":0,"text":"Filmfestspiele","type":"OTHER_SENSITIVE","confidence":0.8},{"chunkIndex":0,"text":"Vincent Bolloré","type":"PERSON_NAME","confidence":0.85}]}"#;
+        let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].text, "Vincent Bolloré");
+        assert_eq!(warnings.len(), 2);
     }
 }
