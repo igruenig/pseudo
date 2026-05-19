@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, startModelDownload } from "./lib/app/tauriApi";
 import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
+import { buildInlineSegments } from "./lib/core/inlineSegments";
 import { stringIndexToByteOffset } from "./lib/core/offsets";
-import { buildPreview } from "./lib/core/preview";
 import { hashText, readinessLabel } from "./lib/core/state";
 import type { AnalysisResult, AnalysisStateName, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType } from "./lib/core/types";
 import "./styles.css";
 
 const MANUAL_TYPES: SensitiveType[] = ["PERSON_NAME", "ORGANIZATION", "LOCATION", "OTHER_SENSITIVE"];
+type FloatingPoint = { top: number; left: number };
+type ManualSelection = FloatingPoint & { start: number; end: number };
 
 export default function App() {
   const [text, setText] = useState("");
@@ -20,7 +22,11 @@ export default function App() {
   const [downloadStatus, setDownloadStatus] = useState<ModelDownloadStatus | null>(null);
   const [copied, setCopied] = useState(false);
   const [manualType, setManualType] = useState<SensitiveType>("PERSON_NAME");
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [popoverPoint, setPopoverPoint] = useState<FloatingPoint | null>(null);
+  const [manualSelection, setManualSelection] = useState<ManualSelection | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const documentRef = useRef<HTMLDivElement | null>(null);
 
   const state: AnalysisStateName = useMemo(() => {
     if (busy) return "ANALYZING";
@@ -30,8 +36,13 @@ export default function App() {
     return "ANALYZED_READY";
   }, [busy, error, result, text]);
 
-  const preview = useMemo(() => buildPreview(text, result, groups), [groups, result, text]);
+  const inlineSegments = useMemo(() => buildInlineSegments(text, result, groups), [groups, result, text]);
   const readiness = readinessLabel(state, result, groups);
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId]
+  );
+  const showModelStrip = !downloadStatus || downloadStatus.state !== "complete";
 
   useEffect(() => {
     void refreshModel();
@@ -59,6 +70,8 @@ export default function App() {
       const next = await analyzeText(requestId, text);
       setResult(next);
       setGroups(next.groups);
+      setSelectedGroupId(null);
+      setManualSelection(null);
       await refreshModel();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -99,6 +112,15 @@ export default function App() {
     setGroups([]);
     setError(null);
     setCopied(false);
+    setSelectedGroupId(null);
+    setManualSelection(null);
+  }
+
+  function handleEditText() {
+    setResult(null);
+    setGroups([]);
+    setSelectedGroupId(null);
+    setManualSelection(null);
   }
 
   function updateGroup(id: string, replacement: string) {
@@ -109,20 +131,81 @@ export default function App() {
     setGroups((current) => current.map((group) => (group.id === id ? { ...group, enabled: !group.enabled } : group)));
   }
 
+  function selectGroup(id: string, point: FloatingPoint) {
+    setSelectedGroupId(id);
+    setPopoverPoint(point);
+    setManualSelection(null);
+  }
+
+  function handleTextChange(nextText: string) {
+    setText(nextText);
+    setSelectedGroupId(null);
+    setManualSelection(null);
+  }
+
+  function byteOffsetFromSelectionBoundary(node: Node, offset: number): number | null {
+    if (node.nodeType !== Node.TEXT_NODE || !node.parentElement) return null;
+    const segment = node.parentElement.closest<HTMLElement>("[data-byte-start]");
+    if (!segment) return null;
+    const base = Number(segment.dataset.byteStart);
+    const content = node.textContent ?? "";
+    return base + stringIndexToByteOffset(content, offset);
+  }
+
+  function handleReviewSelection() {
+    if (state !== "ANALYZED_READY" || !documentRef.current) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setManualSelection(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!documentRef.current.contains(range.commonAncestorContainer)) {
+      setManualSelection(null);
+      return;
+    }
+
+    const start = byteOffsetFromSelectionBoundary(range.startContainer, range.startOffset);
+    const end = byteOffsetFromSelectionBoundary(range.endContainer, range.endOffset);
+    if (start === null || end === null || start === end) {
+      setManualSelection(null);
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    setSelectedGroupId(null);
+    setManualSelection({
+      start: Math.min(start, end),
+      end: Math.max(start, end),
+      top: Math.max(12, rect.top - 46),
+      left: rect.left + rect.width / 2
+    });
+  }
+
   async function markSelection() {
+    if (!result) return;
+    const selectedStart = manualSelection?.start ?? -1;
+    const selectedEnd = manualSelection?.end ?? -1;
     const start = editorRef.current?.selectionStart ?? -1;
     const end = editorRef.current?.selectionEnd ?? -1;
-    if (!result || start < 0 || end <= start) return;
+    const byteStart = selectedStart >= 0 ? selectedStart : stringIndexToByteOffset(text, start);
+    const byteEnd = selectedEnd >= 0 ? selectedEnd : stringIndexToByteOffset(text, end);
+    if (byteStart < 0 || byteEnd <= byteStart) return;
+
     const finding = await createManualFinding(
       crypto.randomUUID(),
       text,
-      stringIndexToByteOffset(text, start),
-      stringIndexToByteOffset(text, end),
+      byteStart,
+      byteEnd,
       manualType
     );
     const nextResult = { ...result, findings: [...result.findings, finding] };
     setResult(nextResult);
     setGroups((await import("./lib/core/replacements")).buildGroups(nextResult.findings));
+    setManualSelection(null);
+    window.getSelection()?.removeAllRanges();
   }
 
   return (
@@ -133,62 +216,112 @@ export default function App() {
           <p>{readiness}</p>
         </div>
         <div className="toolbar-actions">
+          {state === "ANALYZED_READY" ? <button onClick={handleEditText}>Edit text</button> : null}
           <button onClick={handleAnalyze} disabled={state !== "DIRTY_NEEDS_ANALYSIS"}>Analyze</button>
           <button onClick={handleClear} disabled={state === "EMPTY"}>Clear</button>
           <button className="primary" onClick={handleCopy} disabled={state !== "ANALYZED_READY"}>Copy result</button>
         </div>
       </header>
 
-      <section className="model-strip">
-        <span>{formatModelStatus(modelStatus, downloadStatus)}</span>
-        <span>{downloadStatus ? formatDownloadStatus(downloadStatus) : "Checking model..."}</span>
-        {downloadStatus?.state === "downloading" ? (
-          <button onClick={handleCancelDownload}>Cancel</button>
-        ) : !modelStatus.loaded && downloadStatus?.state !== "complete" ? (
-          <button onClick={handleDownloadModel}>Download model</button>
-        ) : null}
-      </section>
+      {showModelStrip ? (
+        <section className="model-strip">
+          <span>{formatModelStatus(modelStatus, downloadStatus)}</span>
+          <span>{downloadStatus ? formatDownloadStatus(downloadStatus) : "Checking model..."}</span>
+          {downloadStatus?.state === "downloading" ? (
+            <button onClick={handleCancelDownload}>Cancel</button>
+          ) : !modelStatus.loaded && downloadStatus?.state !== "complete" ? (
+            <button onClick={handleDownloadModel}>Download model</button>
+          ) : null}
+        </section>
+      ) : null}
 
       {error ? <div className="error">{error}</div> : null}
       {copied ? <div className="toast">Pseudonymized text copied</div> : null}
 
-      <section className="workspace">
-        <section className="editor-pane">
-          <div className="pane-heading">Source</div>
+      <section className="document-shell">
+        {state === "ANALYZED_READY" && result ? (
+          <div
+            ref={documentRef}
+            className="review-surface"
+            onMouseUp={handleReviewSelection}
+            onKeyUp={handleReviewSelection}
+          >
+            {inlineSegments.map((segment) => {
+              if (segment.kind === "text") {
+                return (
+                  <span
+                    data-byte-start={segment.byteStart}
+                    data-byte-end={segment.byteEnd}
+                    key={segment.key}
+                  >
+                    {segment.text}
+                  </span>
+                );
+              }
+
+              return (
+                <button
+                  className={[
+                    "entity-chip",
+                    segment.group.enabled ? "enabled" : "disabled",
+                    segment.finding.needsReview ? "needs-review" : ""
+                  ].join(" ")}
+                  key={segment.key}
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    selectGroup(segment.group.id, {
+                      top: rect.bottom + 8,
+                      left: rect.left + rect.width / 2
+                    });
+                  }}
+                  title={`${segment.originalText} · ${segment.finding.type}`}
+                  type="button"
+                >
+                  {segment.displayText}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
           <textarea
             ref={editorRef}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => handleTextChange(event.target.value)}
             placeholder="Paste text here"
             spellCheck={false}
+            disabled={busy}
           />
-        </section>
-
-        <section className="replacement-pane">
-          <div className="pane-heading">Replacements</div>
-          <div className="manual-row">
-            <select value={manualType} onChange={(event) => setManualType(event.target.value as SensitiveType)}>
-              {MANUAL_TYPES.map((type) => <option key={type}>{type}</option>)}
-            </select>
-            <button onClick={markSelection} disabled={state !== "ANALYZED_READY"}>Mark sensitive</button>
-          </div>
-          <div className="replacement-list">
-            {groups.map((group) => (
-              <label className="replacement-row" key={group.id}>
-                <input type="checkbox" checked={group.enabled} onChange={() => toggleGroup(group.id)} />
-                <span className="original">{group.original}</span>
-                <input value={group.replacement} onChange={(event) => updateGroup(group.id, event.target.value)} />
-              </label>
-            ))}
-            {groups.length === 0 ? <p className="empty-note">No findings yet.</p> : null}
-          </div>
-        </section>
-
-        <section className="preview-pane">
-          <div className="pane-heading">Pseudonymized</div>
-          <pre>{preview || "Analyze text to preview the result."}</pre>
-        </section>
+        )}
       </section>
+
+      {manualSelection ? (
+        <div className="selection-toolbar" style={{ top: manualSelection.top, left: manualSelection.left }}>
+          <select value={manualType} onChange={(event) => setManualType(event.target.value as SensitiveType)}>
+            {MANUAL_TYPES.map((type) => <option key={type}>{type}</option>)}
+          </select>
+          <button onClick={markSelection}>Mark</button>
+        </div>
+      ) : null}
+
+      {selectedGroup && popoverPoint ? (
+        <div className="entity-popover" style={{ top: popoverPoint.top, left: popoverPoint.left }}>
+          <div className="popover-label">{selectedGroup.type}</div>
+          <div className="popover-original">{selectedGroup.original}</div>
+          <input
+            autoFocus
+            value={selectedGroup.replacement}
+            onChange={(event) => updateGroup(selectedGroup.id, event.target.value)}
+          />
+          <label className="popover-toggle">
+            <input
+              type="checkbox"
+              checked={selectedGroup.enabled}
+              onChange={() => toggleGroup(selectedGroup.id)}
+            />
+            Replace this group
+          </label>
+        </div>
+      ) : null}
     </main>
   );
 }
