@@ -4,7 +4,7 @@
 
 Build a cross-platform desktop app with Tauri that helps users pseudonymize pasted text locally before sending it to an LLM. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
 
-The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. Within 20 seconds, a new user should believe three things: the app is local, it works, and they stay in control. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
+The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration, with the privacy promise reinforced by observable local behavior rather than heavy explanatory copy. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
 
 Treat the deterministic/manual app as the real MVP, not as a degraded fallback. The local LLM should arrive later as an accuracy upgrade after the user has already seen a useful, private, understandable workflow.
 
@@ -14,43 +14,49 @@ Treat the deterministic/manual app as the real MVP, not as a degraded fallback. 
 
 The first launch should open into a usable deterministic/manual app, not a setup gate. If no model is installed, the user can still experience the core product immediately.
 
-1. App opens with a compact trust/status strip: `Local only`, `Nothing saved`, `Deterministic mode`, and `Clear`.
-2. The source editor is preloaded with a realistic sample that contains a name, organization, email, date, ID, location, role, phone number, and invoice-like identifier.
-3. The primary first-run action is `Analyze sample`.
-4. Running the sample uses deterministic detectors and shows highlights, grouped replacements, pseudonymized preview, readiness summary, copy behavior, and clear action immediately.
-5. The app does not show license activation, account creation, settings, model download, or sidecar setup as primary first-run actions.
-6. The UI explains model setup only after the user has seen value: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
-7. `Paste your own text` remains the primary next action after the sample result.
+1. App opens with a realistic legal-work sample already analyzed.
+2. The first visible state shows highlighted original text, populated replacement groups, a rendered pseudonymized result, readiness summary, enabled `Copy result`, and clear action.
+3. The primary first-run action is `Try your own text`, which clears the sample and focuses the empty editor.
+4. The first-run trust strip uses user language: `Local only`, `Nothing saved`, and a neutral status such as `Basic detection active`. Avoid `deterministic mode` and avoid model-status language on the first screen.
+5. After the pre-analyzed sample appears, show a subtle proof of locality such as `Analyzed in 230 ms · no network used`.
+6. The app does not show license activation, account creation, settings, model download, model status, upgrade banners, or sidecar setup as primary first-run actions.
+7. The UI explains model setup only after the user has successfully analyzed their own text at least once: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
+
+The built-in sample may ship with a verified replacement map so it can demonstrate names, organizations, roles, and other context-sensitive spans before a local model is installed. User-provided text in the no-model state should use deterministic detectors plus manual marking until the local model is enabled.
 
 ### First-Impression Requirements
 
-- Fresh install with no model, no license, and no configuration must still complete the sample workflow.
-- The first sample analysis should feel instant, with a target response under 500 ms on normal desktop hardware.
-- The first screen should look like a working product, not an empty form: source text on the left, replacement review on the right, and the pseudonymized result visible immediately after analysis.
-- `Copy result` should be disabled until analysis has produced a backend-confirmed result.
+- Fresh install with no model, no license, and no configuration must open directly into a successful analyzed sample state.
+- The pre-analyzed sample should be ready at launch, with the underlying deterministic analysis target remaining under 500 ms on normal desktop hardware.
+- The first screen should lead with before/after transformation: original text and pseudonymized text should be directly comparable at a glance, with the replacement panel secondary.
+- `Copy result` should be enabled for the analyzed sample and disabled only for empty, edited-but-not-analyzed, analyzing, or invalid states.
 - Manual marking should be visible enough to communicate user control, even if the new user does not use it during the sample flow.
+- Secondary review controls such as type filters, confidence badges, ignore actions, and reset-to-suggested should be progressively disclosed rather than visible by default on first launch.
 - Warnings should be concise and actionable. Avoid confidence-killing global disclaimers before the user has seen the workflow.
-- Any model-download or license prompt should appear only after a successful sample or deterministic analysis.
+- Any model-download or license prompt should appear only after a successful analysis on the user's own text, not after the built-in sample alone.
+- When the user clears the sample, the empty editor placeholder should say: `Paste any text. Nothing leaves this device.`
+- Copy confirmation should be a transient toast, not a modal, with specific reassurance: `Pseudonymized text copied · original stayed on this device`.
 
 ### Working Flow
 
-1. User pastes text into the editor or starts from the sample.
-2. User clicks `Analyze`, or the sample analysis runs from the explicit sample action.
-3. App splits the text into offset-preserving chunks and sends them to the available local detection pipeline.
-4. Sensitive spans are highlighted inline.
-5. A side panel lists unique detected entities grouped by canonical text and type.
-6. Each list item has:
+1. User opens the app into the already-analyzed sample or clicks `Try your own text`.
+2. User pastes text into the editor.
+3. User clicks `Analyze`.
+4. App splits the text into offset-preserving chunks and sends them to the available local detection pipeline.
+5. Sensitive spans are highlighted inline.
+6. A side panel lists unique detected entities grouped by canonical text and type.
+7. Each list item has:
    - detected value
    - sensitive info type
    - occurrence count
    - suggested pseudonym
    - editable replacement field
    - enable/disable toggle
-7. App immediately applies enabled suggested replacements and shows the pseudonymized result.
-8. User reviews and edits replacements.
-9. The pseudonymized preview updates immediately after each replacement edit or toggle.
-10. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
-11. User copies the final text.
+8. App immediately applies enabled suggested replacements and shows the pseudonymized result.
+9. User reviews and edits replacements.
+10. The pseudonymized preview updates immediately after each replacement edit or toggle.
+11. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
+12. User copies the final text and sees `Pseudonymized text copied · original stayed on this device`.
 
 ## 3. Initial Sensitive Information Types
 
@@ -342,19 +348,33 @@ Manual user markings are first-class findings. In the MVP, the user should be ab
 
 ### Main Screen
 
-Use a two-pane desktop layout:
+Use two related layouts:
+
+First-launch demo layout:
+
+- Lead with before/after transformation.
+- Show the already-analyzed sample original and pseudonymized result directly beside each other on desktop or stacked on mobile.
+- Keep replacement review visible but secondary, either below the before/after comparison or in a narrower side panel.
+- Show `Copy result` enabled, `Try your own text` as the primary next action, and a subtle proof line such as `Analyzed in 230 ms · no network used`.
+
+Working layout after the user pastes their own text, edits the source, or interacts with replacements:
 
 - Left pane: source text editor with highlighted identifying spans
 - Right pane: replacement review list
+- Under or beside the source editor, depending on available window width, show the pseudonymized result preview
 
-Under or beside the source editor, depending on available window width, show the pseudonymized result preview. The result preview should be populated immediately after analysis and update live as the replacement list changes.
+The result preview should be populated immediately after analysis and update live as the replacement list changes.
 
 Top toolbar:
 
 - Analyze
 - Clear
 - Copy result
-- Model status indicator
+- Try your own text on first launch
+
+Do not show a model status indicator, model setup affordance, activation prompt, or upgrade banner on first launch. After the user has analyzed their own text at least once, the toolbar or status area may expose model setup as a secondary action.
+
+Secondary review controls such as type filters, confidence badges, ignore finding, and reset-to-suggested should be progressively disclosed through a `More` affordance or shown on the second analysis onward. They should not compete with the first screen's see, understand, copy path.
 
 Left pane states:
 
@@ -363,6 +383,8 @@ Left pane states:
 - Analysis complete with highlights
 - Pseudonymized preview generated immediately after analysis
 - Error state
+
+The empty input placeholder should say: `Paste any text. Nothing leaves this device.`
 
 Right pane states:
 
@@ -482,8 +504,8 @@ Do not silently download models. Model setup should be framed as an optional upg
 
 For the lawyer-facing demo and future sales flow, keep the app installer small and download the model after install:
 
-- open first launch into the usable deterministic/manual app even when no model is found
-- offer model setup from the status strip, settings, and post-analysis upgrade prompt
+- open first launch into the already-analyzed deterministic/manual sample even when no model is found
+- offer model setup from settings and a post-analysis upgrade prompt only after the user has analyzed their own text
 - explain that the model is downloaded once and future document analysis stays local
 - explain what the model adds: better detection for names, organizations, roles, and context-sensitive spans
 - show model name, approximate size, destination folder, and expected disk requirement
@@ -501,10 +523,10 @@ The sales/demo experience should optimize for trust and time-to-value: install q
 Recommended packaging:
 
 - Small installer that includes the app shell, deterministic detectors, manual marking, and model download manager.
-- First launch opens into the working deterministic/manual app with a sample flow, trust/status strip, replacement review, and copy behavior.
-- Guided local model setup is offered only after explicit user approval, preferably after the user has seen sample or deterministic analysis results.
+- First launch opens into the working deterministic/manual app with an already-analyzed legal-work sample, before/after preview, trust/status strip, replacement review, locality proof, and copy behavior.
+- Guided local model setup is offered only after explicit user approval, preferably after the user has seen deterministic analysis results on their own text.
 - Full local processing after the model is installed.
-- Clear status: `Deterministic only`, `Downloading model`, `Local model ready`, `Trial expired`, or `Licensed`.
+- Clear status in settings or post-own-text analysis states: `Basic detection active`, `Downloading model`, `Local model ready`, `Trial expired`, or `Licensed`.
 
 Recommended trial/free strategy:
 
@@ -604,25 +626,26 @@ Python:
 
 ### Integration Tests
 
-- fresh install, no model, no license: open app, click `Analyze sample`, see highlights, grouped replacements, pseudonymized preview, readiness summary, and enabled `Copy result`
+- fresh install, no model, no license: open app and immediately see an already-analyzed legal-work sample with highlights, grouped replacements, before/after preview, readiness summary, locality proof, and enabled `Copy result`
+- click `Try your own text`, clear the sample, focus the editor, and show `Paste any text. Nothing leaves this device.`
 - paste sample text
-- run the first-run sample flow without model setup
+- run deterministic-only analysis on user-provided text without model setup
 - run deterministic-only analysis
 - show highlights
 - mark selected text as sensitive
 - edit replacement
 - verify pseudonymized preview updates automatically
 - verify readiness summary reflects enabled, disabled, ignored, and review-needed findings
-- copy backend-confirmed final result
+- copy backend-confirmed final result and show `Pseudonymized text copied · original stayed on this device`
 - optional model download completes and enables local LLM analysis
 - expired/unlicensed state falls back to deterministic/manual functionality
 
-### Manual Test Text
+### First-Run Sample and Manual Test Text
 
 ```text
-Jane Doe from ACME Health emailed john.smith@example.com on 12 March 2025.
-Her patient ID is PT-44921 and she lives in Zurich.
-Jane Doe, the senior claims manager, later called +41 44 123 45 67 about invoice INV-2025-991.
+Please prepare the draft settlement note for Jane Doe, the senior claims manager at ACME Health.
+She emailed john.smith@example.com on 12 March 2025 about patient ID PT-44921, and asked that we confirm her Zurich address before Friday's call at +41 44 123 45 67.
+The open invoice is INV-2025-991; please do not include the internal link https://acme.example/matters/44921 in anything we send to opposing counsel.
 ```
 
 Expected groups:
@@ -636,15 +659,17 @@ Expected groups:
 - senior claims manager -> `[ROLE_1]`
 - +41 44 123 45 67 -> `[PHONE_1]`
 - INV-2025-991 -> `[ID_2]`
+- https://acme.example/matters/44921 -> `[URL_1]`
 
 ## 16. Build Phases
 
 ### Phase 1: First-Impression Deterministic MVP
 
 - Create Tauri + React + TypeScript app
-- Build polished two-pane UI with a compact trust/status strip: `Local only`, `Nothing saved`, `Deterministic mode`, and `Clear`
-- Add preloaded first-run sample text and a primary `Analyze sample` action that demonstrates the full deterministic workflow
-- Hide license activation, account creation, settings, model download, and sidecar setup from the primary first-run path
+- Build a polished first-launch before/after demo layout with a compact trust/status strip: `Local only`, `Nothing saved`, `Basic detection active`, and `Clear`
+- Add preloaded legal-work sample text that opens already analyzed using a bundled verified replacement map
+- Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste any text. Nothing leaves this device.`
+- Hide license activation, account creation, settings, model download, model status, upgrade banners, and sidecar setup from the primary first-run path
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
 - Implement canonical Rust grouping and range-based replacement application
@@ -653,9 +678,10 @@ Expected groups:
 - Keep source highlights, replacement rows, and pseudonymized result synchronized
 - Add manual "mark selected text as sensitive"
 - Add concise readiness summary before copy, including findings count, enabled replacements, and items needing review
-- Add copy confirmation, clear action, and polished empty/no-findings/error states
+- Add locality proof after analysis, such as `Analyzed in 230 ms · no network used`
+- Add copy toast `Pseudonymized text copied · original stayed on this device`, clear action, and polished empty/no-findings/error states
 - Add unit tests for replacement logic
-- Add an automated first-run golden-path test for fresh install, no model, no license, sample analysis, review, preview, and copy
+- Add an automated first-run golden-path test for fresh install, no model, no license, already-analyzed sample, before/after preview, review, locality proof, and copy
 
 Deliverable: useful, trustworthy app without LLM dependency that demonstrates value within seconds.
 
@@ -667,6 +693,7 @@ Deliverable: useful, trustworthy app without LLM dependency that demonstrates va
 - Add "ignore finding" action
 - Add explicit "reset to suggested replacements" action
 - Add clear disabled/ignored finding visibility in the readiness summary
+- Keep these controls progressively disclosed through `More` or on later analyses so the first screen remains focused on see, understand, copy
 - Improve chunk boundary selection
 
 Deliverable: practical review workflow that feels controlled, inspectable, and ready for real client text.
@@ -675,12 +702,12 @@ Deliverable: practical review workflow that feels controlled, inspectable, and r
 
 - Add Python sidecar service
 - Load local Qwen 1.7B from app-managed download, configured path, or Hugging Face cache
-- Add optional model download UI with progress, clear privacy copy, and explanation of what the model improves, shown only after the user has completed a sample or deterministic analysis
+- Add optional model download UI with progress, clear privacy copy, and explanation of what the model improves, shown only after the user has completed analysis on their own text
 - Add checksum or manifest validation before model use
 - Implement chunk batching and strict JSON prompt
 - Add Rust command to start/status/check sidecar
 - Merge LLM findings with deterministic findings
-- Add model status UI and post-analysis upgrade prompt when running deterministic-only
+- Add model status UI and post-analysis upgrade prompt only after the user has run deterministic analysis on their own text
 
 Deliverable: local LLM-assisted detection with guided model setup that enhances an already useful app.
 
@@ -742,7 +769,7 @@ Mitigation:
 Mitigation:
 
 - Require explicit user approval before model download
-- Show deterministic/manual value before asking the user to download a model or activate a license
+- Show deterministic/manual value on the user's own text before asking the user to download a model or activate a license
 - Do not show model download, activation, account creation, or settings as primary actions on the first screen
 - Show model size, destination, and local-only analysis promise before setup
 - Never send user text during setup, activation, or update checks
@@ -762,13 +789,13 @@ Mitigation:
 ## 18. Immediate Next Steps
 
 1. Scaffold Tauri + React + TypeScript project.
-2. Build the first-run shell: preloaded sample text, trust/status strip, two-pane layout, preview area, disabled `Copy result`, and clear action.
-3. Implement shared TypeScript types plus mock analysis results to perfect highlights, replacement rows, readiness summary, copy confirmation, and empty/no-findings/error states.
+2. Build the first-run shell: pre-analyzed legal-work sample, trust/status strip, before/after layout, replacement panel, enabled `Copy result`, `Try your own text`, and clear action.
+3. Implement shared TypeScript types plus bundled sample findings/mock analysis results to perfect highlights, replacement rows, readiness summary, locality proof, copy confirmation, and empty/no-findings/error states.
 4. Implement Rust-side grouping and range-based replacement utilities.
 5. Add deterministic detectors and wire them through a Tauri command.
 6. Replace mock analysis with deterministic backend results and keep source highlights, replacement rows, and pseudonymized preview synchronized.
 7. Add manual selected-text marking.
 8. Add the first-run golden-path test and unit tests for grouping, overlap resolution, manual findings, replacement, and readiness summary state.
 9. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
-10. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis.
+10. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis on their own text.
 11. Add the Python sidecar after the deterministic review workflow feels solid.
