@@ -350,7 +350,6 @@ export default function App() {
       {manualSelection ? (
         <div
           className="selection-toolbar"
-          onMouseDown={(event) => event.preventDefault()}
           style={{ top: manualSelection.top, left: manualSelection.left }}
         >
           <select value={manualType} onChange={(event) => setManualType(event.target.value as SensitiveType)}>
