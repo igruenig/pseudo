@@ -4,19 +4,33 @@
 
 Build a cross-platform desktop app with Tauri that helps users pseudonymize pasted text locally before sending it to an LLM. The app should analyze text in offset-preserving chunks, identify directly or indirectly identifying spans, group recurring occurrences, suggest generic replacements, and immediately show a pseudonymized result that the user can review before copying.
 
-The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. A new user should be able to see useful pseudonymization results within seconds, before model setup, licensing, or configuration. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
+The first version should prioritize local privacy, transparent review, predictable replacement behavior, and a strong first impression. Within 20 seconds, a new user should believe three things: the app is local, it works, and they stay in control. A new user should be able to see useful pseudonymization results before model setup, licensing, or configuration. The app can automatically apply suggested replacements after analysis, but the user must always be able to inspect and adjust the replacement map.
+
+Treat the deterministic/manual app as the real MVP, not as a degraded fallback. The local LLM should arrive later as an accuracy upgrade after the user has already seen a useful, private, understandable workflow.
 
 ## 2. Core User Flow
 
 ### First-Run Experience
 
-The first launch should open into a usable deterministic/manual app, not a setup gate. If no model is installed, the user can still try the product immediately.
+The first launch should open into a usable deterministic/manual app, not a setup gate. If no model is installed, the user can still experience the core product immediately.
 
-1. App opens with a compact trust/status strip: `Local only`, `No text saved`, `Model: deterministic`, and `Clear`.
-2. The main editor offers either a preloaded sample text or a clear `Try sample` action.
-3. Running the sample uses deterministic detectors and shows highlights, grouped replacements, pseudonymized preview, and copy behavior immediately.
-4. The UI explains model setup only after the user has seen value: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
-5. `Paste your own text` remains the primary next action after the sample result.
+1. App opens with a compact trust/status strip: `Local only`, `Nothing saved`, `Deterministic mode`, and `Clear`.
+2. The source editor is preloaded with a realistic sample that contains a name, organization, email, date, ID, location, role, phone number, and invoice-like identifier.
+3. The primary first-run action is `Analyze sample`.
+4. Running the sample uses deterministic detectors and shows highlights, grouped replacements, pseudonymized preview, readiness summary, copy behavior, and clear action immediately.
+5. The app does not show license activation, account creation, settings, model download, or sidecar setup as primary first-run actions.
+6. The UI explains model setup only after the user has seen value: installing the local model improves detection for names, organizations, roles, and context-sensitive spans.
+7. `Paste your own text` remains the primary next action after the sample result.
+
+### First-Impression Requirements
+
+- Fresh install with no model, no license, and no configuration must still complete the sample workflow.
+- The first sample analysis should feel instant, with a target response under 500 ms on normal desktop hardware.
+- The first screen should look like a working product, not an empty form: source text on the left, replacement review on the right, and the pseudonymized result visible immediately after analysis.
+- `Copy result` should be disabled until analysis has produced a backend-confirmed result.
+- Manual marking should be visible enough to communicate user control, even if the new user does not use it during the sample flow.
+- Warnings should be concise and actionable. Avoid confidence-killing global disclaimers before the user has seen the workflow.
+- Any model-download or license prompt should appear only after a successful sample or deterministic analysis.
 
 ### Working Flow
 
@@ -92,7 +106,7 @@ The first commercial demo should ship as a small desktop app and download the lo
    - Better packaging story
    - Lower operational complexity after model format is settled
 
-For the first build, use the Python sidecar because it reduces risk and gives faster iteration on prompts and parsing. Before public/commercial distribution, verify the model license allows the intended packaging, download flow, and commercial use.
+For the first deterministic build, do not require the Python sidecar. Add the Python sidecar when the deterministic review workflow already feels useful, because it reduces risk and gives faster iteration on prompts and parsing. Before public/commercial distribution, verify the model license allows the intended packaging, download flow, and commercial use.
 
 ## 5. High-Level Architecture
 
@@ -103,10 +117,11 @@ React UI
   v
 Rust backend
   |
-  | starts/checks local model sidecar
-  | sends offset-preserving chunk batches
+  | runs deterministic detectors
+  | optionally starts/checks local model sidecar
+  | optionally sends offset-preserving chunk batches
   v
-Python local inference service
+Python local inference service, when available
   |
   | loads local Qwen model from Hugging Face cache
   | returns structured findings
@@ -589,6 +604,7 @@ Python:
 
 ### Integration Tests
 
+- fresh install, no model, no license: open app, click `Analyze sample`, see highlights, grouped replacements, pseudonymized preview, readiness summary, and enabled `Copy result`
 - paste sample text
 - run the first-run sample flow without model setup
 - run deterministic-only analysis
@@ -626,8 +642,9 @@ Expected groups:
 ### Phase 1: First-Impression Deterministic MVP
 
 - Create Tauri + React + TypeScript app
-- Build polished two-pane UI with a compact trust/status strip
-- Add first-run sample text or `Try sample` action that demonstrates the full deterministic workflow
+- Build polished two-pane UI with a compact trust/status strip: `Local only`, `Nothing saved`, `Deterministic mode`, and `Clear`
+- Add preloaded first-run sample text and a primary `Analyze sample` action that demonstrates the full deterministic workflow
+- Hide license activation, account creation, settings, model download, and sidecar setup from the primary first-run path
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
 - Implement canonical Rust grouping and range-based replacement application
@@ -638,6 +655,7 @@ Expected groups:
 - Add concise readiness summary before copy, including findings count, enabled replacements, and items needing review
 - Add copy confirmation, clear action, and polished empty/no-findings/error states
 - Add unit tests for replacement logic
+- Add an automated first-run golden-path test for fresh install, no model, no license, sample analysis, review, preview, and copy
 
 Deliverable: useful, trustworthy app without LLM dependency that demonstrates value within seconds.
 
@@ -657,7 +675,7 @@ Deliverable: practical review workflow that feels controlled, inspectable, and r
 
 - Add Python sidecar service
 - Load local Qwen 1.7B from app-managed download, configured path, or Hugging Face cache
-- Add optional model download UI with progress, clear privacy copy, and explanation of what the model improves
+- Add optional model download UI with progress, clear privacy copy, and explanation of what the model improves, shown only after the user has completed a sample or deterministic analysis
 - Add checksum or manifest validation before model use
 - Implement chunk batching and strict JSON prompt
 - Add Rust command to start/status/check sidecar
@@ -725,6 +743,7 @@ Mitigation:
 
 - Require explicit user approval before model download
 - Show deterministic/manual value before asking the user to download a model or activate a license
+- Do not show model download, activation, account creation, or settings as primary actions on the first screen
 - Show model size, destination, and local-only analysis promise before setup
 - Never send user text during setup, activation, or update checks
 - Keep deterministic/manual functionality available without activation
@@ -743,12 +762,13 @@ Mitigation:
 ## 18. Immediate Next Steps
 
 1. Scaffold Tauri + React + TypeScript project.
-2. Implement shared TypeScript types and Rust-side grouping/replacement utilities.
-3. Build the source editor, replacement list, and auto-updating optimistic result preview with mock findings.
-4. Add first-run sample flow, trust/status strip, readiness summary, copy confirmation, and clear/empty/no-findings/error states.
+2. Build the first-run shell: preloaded sample text, trust/status strip, two-pane layout, preview area, disabled `Copy result`, and clear action.
+3. Implement shared TypeScript types plus mock analysis results to perfect highlights, replacement rows, readiness summary, copy confirmation, and empty/no-findings/error states.
+4. Implement Rust-side grouping and range-based replacement utilities.
 5. Add deterministic detectors and wire them through a Tauri command.
-6. Add manual selected-text marking.
-7. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
-8. Add unit tests for grouping, overlap resolution, manual findings, replacement, and readiness summary state.
-9. Add optional model setup UI state with placeholder download/status behavior.
-10. Add the Python sidecar after the deterministic review workflow feels solid.
+6. Replace mock analysis with deterministic backend results and keep source highlights, replacement rows, and pseudonymized preview synchronized.
+7. Add manual selected-text marking.
+8. Add the first-run golden-path test and unit tests for grouping, overlap resolution, manual findings, replacement, and readiness summary state.
+9. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
+10. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis.
+11. Add the Python sidecar after the deterministic review workflow feels solid.
