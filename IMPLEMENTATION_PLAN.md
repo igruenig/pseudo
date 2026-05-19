@@ -207,6 +207,8 @@ type ReplacementGroup = {
   suggestedReplacement: string;
   replacement: string;
   enabled: boolean;
+  aliases?: string[];
+  aliasOfGroupId?: string;
 };
 ```
 
@@ -218,7 +220,24 @@ type AnalysisResult = {
   findings: Finding[];
   groups: ReplacementGroup[];
   pseudonymizedText: string;
+  replacementMemory: ReplacementMemory;
   warnings: string[];
+};
+```
+
+### Replacement Memory
+
+```ts
+type ReplacementMemoryEntry = {
+  type: SensitiveType;
+  normalizedOriginal: string;
+  replacement: string;
+  enabled: boolean;
+  firstAssignedAt: string;
+};
+
+type ReplacementMemory = {
+  entries: ReplacementMemoryEntry[];
 };
 ```
 
@@ -382,6 +401,16 @@ Normalization rules:
 - lowercase for grouping
 - keep original display text from first occurrence
 
+Phase 1 co-reference scope:
+
+- Group exact normalized matches only.
+- Do not automatically group `Jane`, `Jane Doe`, `Ms. Doe`, or pronouns together in Phase 1.
+- Rely on manual marking for aliases in Phase 1.
+- Defer model-assisted alias/co-reference suggestions to Phase 3.
+- Keep `aliases` and `aliasOfGroupId` in the data model for later reviewable alias grouping, but leave them unused by default in Phase 1.
+
+Do not implement substring-containment grouping in Phase 1. It creates tempting false positives and requires parent/child review behavior that the first deterministic MVP does not need.
+
 ### Suggested Replacements
 
 Initial generic replacements:
@@ -399,7 +428,20 @@ Initial generic replacements:
 | `URL` | `[URL_1]` |
 | `OTHER_SENSITIVE` | `[SENSITIVE_INFO_1]` |
 
-The numbering should be stable per analysis result and per type.
+Suggested replacement numbering should be deterministic by first occurrence offset for newly seen groups. Existing session mappings take precedence over first-occurrence order.
+
+### Re-Analysis Stability
+
+Replacement choices must persist across re-analysis within the same unsaved session unless the user explicitly resets them.
+
+- Maintain a session-local `ReplacementMemory` keyed by `(type, normalizedOriginal)`.
+- On re-analysis, if a new group matches an existing memory entry, reuse its `replacement` and `enabled` state.
+- For groups not present in memory, assign the next available number for that type based on first occurrence offset among only the newly seen groups.
+- Do not renumber existing remembered replacements just because a new finding appears earlier in the edited text.
+- If a remembered group disappears from the current text, keep its memory entry for the session so it can reappear without changing replacement.
+- Provide an explicit `Reset replacements` action to clear memory and regenerate suggestions from the current analysis.
+
+Example: if `Jane Doe` is first assigned `[PERSON_1]`, then the user edits text so `John Smith` appears before `Jane Doe`, `Jane Doe` remains `[PERSON_1]` and `John Smith` becomes the next available person replacement.
 
 ### Applying Replacements
 
@@ -517,7 +559,7 @@ async fn get_audit_log_status() -> Result<AuditLogStatus, AppError>;
 async fn record_analysis_event(event: AnalysisAuditEvent) -> Result<(), AppError>;
 ```
 
-The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings and groups. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result.
+The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, and session `ReplacementMemory`. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result.
 
 `LicenseStatus` should distinguish `Free`, `Trial`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include an expiry timestamp and must transition to `Free` on expiry rather than locking the app. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
 
@@ -771,6 +813,9 @@ Frontend:
 - text chunking preserves offsets
 - grouping repeated findings
 - suggested replacement numbering
+- replacement memory preserves user edits, enabled state, and numbering across re-analysis within the same session
+- newly inserted earlier findings do not renumber existing remembered replacements
+- exact-normalized grouping does not merge aliases such as `Jane`, `Jane Doe`, and `Ms. Doe` in Phase 1
 - optimistic pseudonymized preview generation after analysis
 - disabled replacements are skipped
 - selection-to-manual-finding UI behavior
@@ -852,6 +897,7 @@ Expected groups:
 - Implement paste/edit text area
 - Implement deterministic detectors for email, phone, URL, dates, and ID-like values
 - Implement canonical Rust grouping and range-based replacement application
+- Implement session-local replacement memory so user edits and stable numbering survive re-analysis
 - Implement highlighting and replacement panel
 - Implement immediate range-based pseudonymized preview
 - Keep source highlights, replacement rows, and pseudonymized result synchronized
@@ -887,6 +933,7 @@ Deliverable: practical review workflow that feels controlled, inspectable, and r
 - Add Rust command to start/status/check sidecar
 - Merge LLM findings with deterministic findings
 - Add model status UI and post-analysis upgrade prompt only after the user has run deterministic analysis on their own text
+- Add model-assisted alias/co-reference suggestions as reviewable proposals, not automatic merges
 
 Deliverable: local LLM-assisted detection with guided model setup that enhances an already useful app.
 
