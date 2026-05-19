@@ -366,8 +366,7 @@ The LLM should not be responsible for character offsets. Treat returned text val
 
 - search for all exact occurrences of each returned surface form within the source chunk range
 - discard surface forms that do not occur exactly in the source chunk
-- prefer longer spans over shorter overlapping spans, so `Jane Doe` wins over `Jane` inside the same character range
-- prefer deterministic findings over LLM findings when spans overlap
+- resolve all overlaps through the canonical overlap resolver described below
 - keep every non-overlapping matched range and group repeated occurrences later
 
 For example, if a chunk contains `Jane told Jane Doe that Jane should call back.` and the LLM returns `Jane`, `Jane Doe`, and `Jane`, the backend should resolve ranges for all exact matches, remove the overlapping `Jane` inside `Jane Doe`, and group the two remaining `Jane` occurrences together.
@@ -380,8 +379,48 @@ The Rust backend should validate model output before passing it to the UI:
 - clamp confidence to `0..1`
 - reject unknown types
 - resolve overlapping spans deterministically
-- prefer deterministic findings over LLM findings when spans overlap
 - preserve original casing and whitespace
+
+### Step 5: Canonical Overlap Resolution
+
+All deterministic, manual, and LLM findings must flow through one canonical resolver in `pseudo-core/src/overlap.rs`. The resolver receives validated candidate findings with exact source offsets and returns a sorted, non-overlapping list.
+
+Candidate metadata:
+
+- `source`: `MANUAL`, `DETERMINISTIC`, or `LLM`
+- `type`
+- `start`
+- `end`
+- `text`
+- `confidence`
+- optional detector/rule name
+
+Priority function:
+
+1. Reject invalid ranges where `start >= end` or where the candidate text does not exactly equal `sourceText[start..end]`.
+2. Sort candidates by `start` ascending, then `end` descending, then priority score descending.
+3. Build connected overlap clusters. Two candidates are in the same cluster when their ranges overlap by at least one character, directly or through another overlapping candidate.
+4. For each cluster, choose winners greedily by priority score. Add a candidate if it does not overlap any already chosen winner in that cluster.
+5. Sort final winners by `start` ascending.
+
+Priority score, highest first:
+
+1. source priority: `MANUAL` > `DETERMINISTIC` > `LLM`
+2. type priority for deterministic ties: `EMAIL` > `URL` > `PHONE` > `ID_NUMBER` > `DATE` > `PERSON_NAME` > `ORGANIZATION` > `ROLE_OR_POSITION` > `LOCATION` > `OTHER_SENSITIVE`
+3. longer span wins when one candidate fully contains another
+4. higher confidence wins
+5. earlier start wins
+6. later end wins
+7. stable candidate id wins as final tie-breaker
+
+Required behaviors:
+
+- Manual findings override overlapping deterministic or LLM findings.
+- Deterministic findings override overlapping LLM findings, including same-span type disagreement.
+- Among deterministic findings, type priority resolves same-span or partial-overlap conflicts. For example, an email finding should win over a URL/domain finding that overlaps its domain.
+- When source and type priority tie, longer contained spans win, so `Jane Doe` wins over `Jane`.
+- Partial overlaps where neither span contains the other still resolve deterministically through the same score. The lower-scored candidate is discarded rather than trimmed.
+- The resolver never mutates candidate ranges or splits findings.
 
 ## 8. Replacement Strategy
 
@@ -833,6 +872,8 @@ Rust:
 - Tauri app crate model download status and checksum/manifest validation
 - exact surface-form matching from LLM output to source ranges
 - overlap resolution
+- overlap resolver property tests: output is sorted, non-overlapping, every winner exactly matches its source slice, resolver is deterministic under input permutation, and adding a lower-priority overlapping candidate cannot remove a higher-priority winner
+- overlap resolver fixtures for deterministic-vs-deterministic conflicts, email-vs-URL/domain overlap, date-inside-ID overlap, LLM partial overlap, same-span type disagreement, manual override, and longer-contained-span wins
 - canonical grouping and replacement application from end to start
 - manual finding validation for selected ranges
 - license status and activation state handling without user text
