@@ -12,6 +12,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::analyze_text,
             commands::apply_replacements,
+            commands::copy_text_to_clipboard,
             commands::create_manual_finding,
             commands::recompute_analysis,
             commands::load_model,

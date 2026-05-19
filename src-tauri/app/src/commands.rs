@@ -49,6 +49,12 @@ pub async fn apply_replacements(
 }
 
 #[tauri::command]
+pub async fn copy_text_to_clipboard(text: String) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+    clipboard.set_text(text).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn create_manual_finding(
     _request_id: String,
     text: String,

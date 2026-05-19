@@ -20,6 +20,14 @@ export async function applyReplacementsBackend(
   return invoke("apply_replacements", { text, expectedTextHash, groups });
 }
 
+export async function copyTextToClipboard(text: string): Promise<void> {
+  if (!isTauri) {
+    await writeBrowserClipboard(text);
+    return;
+  }
+  return invoke("copy_text_to_clipboard", { text });
+}
+
 export async function createManualFinding(
   requestId: string,
   text: string,
@@ -136,4 +144,31 @@ async function mockAnalyze(requestId: string, text: string): Promise<AnalysisRes
     pseudonymizedText: applyReplacements(text, findings, groups),
     warnings: ["Browser preview uses deterministic email/URL detection only."]
   };
+}
+
+async function writeBrowserClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Some browser contexts expose navigator.clipboard but reject writes; fall back to selection copy.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.readOnly = true;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copiedWithFallback = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copiedWithFallback) {
+    throw new Error("Copy failed. Select the document text and copy manually.");
+  }
 }

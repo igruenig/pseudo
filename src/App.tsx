@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, recomputeAnalysis, startModelDownload } from "./lib/app/tauriApi";
+import { analyzeText, applyReplacementsBackend, cancelModelDownload, copyTextToClipboard, createManualFinding, getModelDownloadStatus, getModelStatus, recomputeAnalysis, startModelDownload } from "./lib/app/tauriApi";
 import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
 import { buildInlineSegments } from "./lib/core/inlineSegments";
@@ -98,38 +98,11 @@ export default function App() {
     setError(null);
     try {
       const confirmed = await applyReplacementsBackend(text, result.sourceTextHash, groups);
-      await writeClipboard(confirmed);
+      await copyTextToClipboard(confirmed);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function writeClipboard(value: string) {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return;
-      } catch {
-        // Some WebViews expose navigator.clipboard but reject writes; fall back to selection copy.
-      }
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.readOnly = true;
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
-    textarea.style.top = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const copiedWithFallback = document.execCommand("copy");
-    document.body.removeChild(textarea);
-
-    if (!copiedWithFallback) {
-      throw new Error("Copy failed. Select the document text and copy manually.");
     }
   }
 
