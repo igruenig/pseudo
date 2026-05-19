@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use pseudo_core::{Finding, FindingSource, SensitiveType};
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
+use serde_json::Value;
 use uuid::Uuid;
 
 use pseudo_core::chunking::TextChunk;
@@ -22,6 +25,19 @@ pub struct LlmFinding {
     pub confidence: Option<f32>,
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum LlmEnvelope {
+    Schema(LlmResponse),
+    NumberedMap(BTreeMap<String, LegacyFinding>),
+}
+
+#[derive(Debug)]
+struct LegacyFinding {
+    text: String,
+    r#type: SensitiveType,
 }
 
 pub fn response_schema_json() -> &'static str {
@@ -73,7 +89,23 @@ pub fn response_grammar() -> Result<String, String> {
 
 pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Finding>, Vec<String>), String> {
     let json = extract_json_object(json).ok_or_else(|| "LLM did not return a JSON object".to_string())?;
-    let response: LlmResponse = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let envelope: LlmEnvelope = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let response = match envelope {
+        LlmEnvelope::Schema(response) => response,
+        LlmEnvelope::NumberedMap(items) => LlmResponse {
+            findings: items
+                .into_values()
+                .map(|item| LlmFinding {
+                    chunk_index: 0,
+                    text: item.text,
+                    r#type: item.r#type,
+                    confidence: Some(0.6),
+                    reason: None,
+                })
+                .collect(),
+            warnings: vec!["Adapted non-schema LLM output".into()],
+        },
+    };
     let mut findings = Vec::new();
     let mut warnings = response.warnings;
 
@@ -87,7 +119,7 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
             continue;
         }
         let mut matched = false;
-        for (relative_start, _) in chunk.text.match_indices(&item.text) {
+        for relative_start in surface_matches(&chunk.text, &item.text) {
             matched = true;
             let confidence = item.confidence.unwrap_or(0.5).clamp(0.0, 1.0);
             findings.push(Finding {
@@ -108,6 +140,59 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
     }
 
     Ok((findings, warnings))
+}
+
+impl<'de> Deserialize<'de> for LegacyFinding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let Some(items) = value.as_array() else {
+            return Err(de::Error::custom("legacy finding must be an array"));
+        };
+        let text = items
+            .first()
+            .and_then(Value::as_str)
+            .ok_or_else(|| de::Error::custom("legacy finding missing text"))?
+            .to_string();
+        let type_name = items
+            .get(1)
+            .and_then(Value::as_str)
+            .ok_or_else(|| de::Error::custom("legacy finding missing type"))?;
+        let r#type = parse_sensitive_type(type_name).map_err(de::Error::custom)?;
+        Ok(Self { text, r#type })
+    }
+}
+
+fn parse_sensitive_type(value: &str) -> Result<SensitiveType, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "PERSON" | "PERSON_NAME" | "NAME" => Ok(SensitiveType::PersonName),
+        "COMPANY" | "ORG" | "ORGANIZATION" | "ORGANISATION" => Ok(SensitiveType::Organization),
+        "ROLE" | "ROLE_OR_POSITION" | "POSITION" | "TITLE" => Ok(SensitiveType::RoleOrPosition),
+        "LOCATION" | "ADDRESS" | "PLACE" => Ok(SensitiveType::Location),
+        "EMAIL" | "E-MAIL" => Ok(SensitiveType::Email),
+        "PHONE" | "TELEPHONE" | "TEL" => Ok(SensitiveType::Phone),
+        "DATE" => Ok(SensitiveType::Date),
+        "ID" | "ID_NUMBER" | "IDENTIFIER" => Ok(SensitiveType::IdNumber),
+        "URL" | "LINK" | "WEBSITE" => Ok(SensitiveType::Url),
+        "OTHER" | "OTHER_SENSITIVE" | "SENSITIVE" => Ok(SensitiveType::OtherSensitive),
+        other => Err(format!("unknown sensitive type `{other}`")),
+    }
+}
+
+fn surface_matches(haystack: &str, needle: &str) -> Vec<usize> {
+    let exact = haystack.match_indices(needle).map(|(start, _)| start).collect::<Vec<_>>();
+    if !exact.is_empty() {
+        return exact;
+    }
+
+    let haystack_lower = haystack.to_lowercase();
+    let needle_lower = needle.to_lowercase();
+    haystack_lower
+        .match_indices(&needle_lower)
+        .filter_map(|(start, _)| haystack.is_char_boundary(start).then_some(start))
+        .collect()
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -201,5 +286,24 @@ done"#;
         let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn adapts_numbered_map_output() {
+        let source = "Jane Doe emailed jane.doe@example.com about ACME AG.";
+        let chunks = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: source.len(),
+            text: source.into(),
+        }];
+        let json = r#"{"0":["jane.doe@example.com","email"],"1":["acme ag","company"]}"#;
+        let (findings, warnings) = parse_llm_response(json, &chunks).unwrap();
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].r#type, SensitiveType::Email);
+        assert_eq!(findings[1].text, "acme ag");
+        assert_eq!(findings[1].start, 44);
+        assert_eq!(findings[1].end, 51);
+        assert_eq!(warnings, vec!["Adapted non-schema LLM output"]);
     }
 }

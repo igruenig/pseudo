@@ -208,12 +208,21 @@ fn build_prompt(chunks: &[pseudo_core::chunking::TextChunk]) -> String {
         .collect::<Vec<_>>();
 
     format!(
-        "You identify sensitive information in text for local pseudonymization. /no_think\n\
-Return only JSON matching the provided schema. Do not rewrite the text.\n\
-For each chunk, return exact substrings that appear in that chunk.\n\
-Sensitive types: PERSON_NAME, ORGANIZATION, ROLE_OR_POSITION, LOCATION, EMAIL, PHONE, DATE, ID_NUMBER, URL, OTHER_SENSITIVE.\n\
+        "<|im_start|>system\n\
+You extract sensitive spans for local pseudonymization. Return JSON only. Do not explain.\n\
+Every finding text must be an exact substring copied from the input chunk.\n\
+Do not infer hidden values. Do not extract parts inside an email if the full email is already extracted.\n\
+Detect organizations, including company names with legal suffixes such as AG, GmbH, Ltd, LLC, Inc, SA, or BV.\n\
+Valid types: PERSON_NAME, ORGANIZATION, ROLE_OR_POSITION, LOCATION, EMAIL, PHONE, DATE, ID_NUMBER, URL, OTHER_SENSITIVE.\n\
+Required output shape: {{\"findings\":[{{\"chunkIndex\":0,\"text\":\"Jane Doe\",\"type\":\"PERSON_NAME\",\"confidence\":0.90}},{{\"chunkIndex\":0,\"text\":\"ACME AG\",\"type\":\"ORGANIZATION\",\"confidence\":0.85}}]}}\n\
+If there are no findings, return {{\"findings\":[]}}.\n\
+<|im_end|>\n\
+<|im_start|>user\n\
+/no_think\n\
 Input chunks:\n{}\n\
-JSON:",
+Return JSON now.\n\
+<|im_end|>\n\
+<|im_start|>assistant\n",
         serde_json::to_string(&chunk_json).expect("chunk json serializes")
     )
 }
@@ -258,14 +267,15 @@ mod tests {
     fn detects_with_local_model() {
         tauri::async_runtime::block_on(async {
             let runtime = ModelRuntime::default();
-            let result = crate::analysis::analyze(
-                "smoke".into(),
-                "Jane Doe emailed jane.doe@example.com about ACME AG.".into(),
-                &runtime,
-            )
+            let text = "Jane Doe from ACME AG emailed jane.doe@example.com about a meeting with Dr. Peter Keller in Zurich.";
+            let result = crate::analysis::analyze("smoke".into(), text.into(), &runtime)
             .await;
             assert_eq!(result.request_id, "smoke");
-            assert!(!result.pseudonymized_text.is_empty());
+            assert!(result.findings.iter().any(|finding| finding.text == "Jane Doe"));
+            assert!(result.findings.iter().any(|finding| finding.text == "ACME AG"));
+            assert!(result.findings.iter().any(|finding| finding.text == "jane.doe@example.com"));
+            assert!(result.findings.iter().any(|finding| finding.text == "Dr. Peter Keller"));
+            assert!(result.findings.iter().any(|finding| finding.text == "Zurich"));
         });
     }
 }
