@@ -147,16 +147,57 @@ export default function App() {
     setManualSelection(null);
   }
 
-  function byteOffsetFromSelectionBoundary(node: Node, offset: number): number | null {
-    if (node.nodeType !== Node.TEXT_NODE || !node.parentElement) return null;
+  function firstTextNode(node: Node): Text | null {
+    if (node.nodeType === Node.TEXT_NODE) return node as Text;
+    for (const child of Array.from(node.childNodes)) {
+      const found = firstTextNode(child);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function lastTextNode(node: Node): Text | null {
+    if (node.nodeType === Node.TEXT_NODE) return node as Text;
+    const children = Array.from(node.childNodes);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const found = lastTextNode(children[index]);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function byteOffsetFromTextNode(node: Text, offset: number): number | null {
+    if (!node.parentElement) return null;
     const segment = node.parentElement.closest<HTMLElement>("[data-byte-start]");
     if (!segment) return null;
     const base = Number(segment.dataset.byteStart);
-    const content = node.textContent ?? "";
+    if (segment.dataset.entity === "true") {
+      return offset <= 0 ? base : Number(segment.dataset.byteEnd);
+    }
+    const content = node.textContent;
     return base + stringIndexToByteOffset(content, offset);
   }
 
-  function handleReviewSelection() {
+  function byteOffsetFromSelectionBoundary(node: Node, offset: number, edge: "start" | "end"): number | null {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return byteOffsetFromTextNode(node as Text, offset);
+    }
+
+    const children = Array.from(node.childNodes);
+    const candidate = edge === "start"
+      ? children.slice(offset).map(firstTextNode).find(Boolean)
+      : children.slice(0, offset).reverse().map(lastTextNode).find(Boolean);
+
+    if (!candidate) {
+      const element = node instanceof HTMLElement ? node.closest<HTMLElement>("[data-byte-start]") : null;
+      if (!element) return null;
+      return edge === "start" ? Number(element.dataset.byteStart) : Number(element.dataset.byteEnd);
+    }
+
+    return byteOffsetFromTextNode(candidate, edge === "start" ? 0 : candidate.textContent.length);
+  }
+
+  function updateReviewSelection() {
     if (state !== "ANALYZED_READY" || !documentRef.current) return;
 
     const selection = window.getSelection();
@@ -171,8 +212,8 @@ export default function App() {
       return;
     }
 
-    const start = byteOffsetFromSelectionBoundary(range.startContainer, range.startOffset);
-    const end = byteOffsetFromSelectionBoundary(range.endContainer, range.endOffset);
+    const start = byteOffsetFromSelectionBoundary(range.startContainer, range.startOffset, "start");
+    const end = byteOffsetFromSelectionBoundary(range.endContainer, range.endOffset, "end");
     if (start === null || end === null || start === end) {
       setManualSelection(null);
       return;
@@ -186,6 +227,10 @@ export default function App() {
       top: Math.max(12, rect.top - 46),
       left: rect.left + rect.width / 2
     });
+  }
+
+  function handleReviewSelection() {
+    window.setTimeout(updateReviewSelection, 0);
   }
 
   async function markSelection() {
@@ -270,6 +315,9 @@ export default function App() {
                     segment.group.enabled ? "enabled" : "disabled",
                     segment.finding.needsReview ? "needs-review" : ""
                   ].join(" ")}
+                  data-byte-end={segment.byteEnd}
+                  data-byte-start={segment.byteStart}
+                  data-entity="true"
                   key={segment.key}
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();

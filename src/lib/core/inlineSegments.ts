@@ -16,6 +16,8 @@ export type InlineSegment =
       group: ReplacementGroup;
       originalText: string;
       displayText: string;
+      byteStart: number;
+      byteEnd: number;
       stringStart: number;
       stringEnd: number;
     };
@@ -62,6 +64,8 @@ export function buildInlineSegments(text: string, result: AnalysisResult | null,
       group,
       originalText: text.slice(range.start, range.end),
       displayText: group.enabled ? group.replacement : text.slice(range.start, range.end),
+      byteStart: finding.start,
+      byteEnd: finding.end,
       stringStart: range.start,
       stringEnd: range.end
     });
