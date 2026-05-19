@@ -31,7 +31,7 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 - Fresh install with no model, no license, and no configuration must open directly into a successful analyzed sample state.
 - The pre-analyzed sample should be ready at launch, with the underlying deterministic analysis target remaining under 500 ms on normal desktop hardware.
 - The first screen should lead with before/after transformation: original text and pseudonymized text should be directly comparable at a glance, with the replacement panel secondary.
-- `Copy result` should be enabled for the analyzed sample and disabled only for empty, edited-but-not-analyzed, analyzing, or invalid states.
+- `Copy result` should be enabled for the analyzed sample and disabled only for `EMPTY`, `DIRTY_NEEDS_ANALYSIS`, `ANALYZING`, or invalid states.
 - Manual marking should be visible enough to communicate user control, even if the new user does not use it during the sample flow.
 - Secondary review controls such as type filters, confidence badges, ignore actions, and reset-to-suggested should be progressively disclosed rather than visible by default on first launch.
 - Warnings should be concise and actionable. Avoid confidence-killing global disclaimers before the user has seen the workflow.
@@ -43,22 +43,50 @@ The built-in sample may ship with a verified replacement map so it can demonstra
 
 1. User opens the app into the already-analyzed sample or clicks `Try your own text`.
 2. User pastes text into the editor.
-3. User clicks `Analyze`.
-4. App splits the text into offset-preserving chunks and sends them to the available local detection pipeline.
-5. Sensitive spans are highlighted inline.
-6. A side panel lists unique detected entities grouped by canonical text and type.
-7. Each list item has:
+3. The pasted or edited text enters `DIRTY_NEEDS_ANALYSIS`; analysis does not run automatically in Phase 1.
+4. User clicks `Analyze`.
+5. App splits the text into offset-preserving chunks and sends them to the available local detection pipeline.
+6. Sensitive spans are highlighted inline.
+7. A side panel lists unique detected entities grouped by canonical text and type.
+8. Each list item has:
    - detected value
    - sensitive info type
    - occurrence count
    - suggested pseudonym
    - editable replacement field
    - enable/disable toggle
-8. App immediately applies enabled suggested replacements and shows the pseudonymized result.
-9. User reviews and edits replacements.
-10. The pseudonymized preview updates immediately after each replacement edit or toggle.
-11. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
-12. User copies the final text and sees `Pseudonymized text copied · no text or results sent`.
+9. App immediately applies enabled suggested replacements and shows the pseudonymized result.
+10. User reviews and edits replacements.
+11. The pseudonymized preview updates immediately after each replacement edit or toggle, but only while the current source text still matches the analyzed text.
+12. Before copy, the app shows a concise readiness summary, such as `Ready to copy`, `9 findings`, `7 replacements enabled`, `2 need review`, or `Manual review recommended`.
+13. User copies the final text and sees `Pseudonymized text copied · no text or results sent`.
+
+### Analysis State Model
+
+Phase 1 uses explicit analysis. Pasting or typing should not trigger analysis automatically. Debounced automatic analysis can be considered later only if it remains local, fast, and does not make review state feel jumpy.
+
+State names:
+
+- `SAMPLE_READY`: built-in sample is already analyzed; highlights, replacement panel, preview, and `Copy result` are enabled.
+- `EMPTY`: no source text; no findings; `Copy result` disabled.
+- `DIRTY_NEEDS_ANALYSIS`: source text has changed since the last successful analysis; `Analyze` is primary; `Copy result` disabled.
+- `ANALYZING`: backend analysis is running; source editing may remain possible, but completion must be ignored if the analyzed text hash no longer matches current text.
+- `ANALYZED_READY`: current source text matches `analysis.textHash`; highlights, replacement edits, live preview, and `Copy result` are enabled.
+- `ERROR`: analysis failed; prior results may be shown only if clearly marked stale.
+
+Dirty-state UI:
+
+- When source text changes after analysis, keep previous highlights and preview visible but dimmed and labeled `Needs re-analysis`.
+- Replacement rows remain visible but disabled until re-analysis, except `Reset replacements`.
+- `Copy result` is disabled in `DIRTY_NEEDS_ANALYSIS`.
+- Readiness summary should say `Review paused · analyze again`.
+- Manual marking is disabled in `DIRTY_NEEDS_ANALYSIS`; the user must analyze current text first so selected ranges are validated against the current source.
+
+Backend sync rule:
+
+- Every analysis result carries `textHash`.
+- Every preview/copy/apply request must include the current source text and expected `textHash`.
+- If hashes do not match, backend commands return a stale-analysis error instead of producing copyable output.
 
 ### Voice and Copy Principles
 
@@ -241,7 +269,7 @@ type ReplacementMemory = {
 };
 ```
 
-`pseudonymizedText` is a derived value produced from the current text and enabled replacement groups. The Rust backend should be the canonical owner of validation, grouping, overlap resolution, and range-based replacement. The frontend may recompute an optimistic live preview for responsiveness, but final copy/export actions should use backend-confirmed output.
+`pseudonymizedText` is a derived value produced from the current text and enabled replacement groups. The Rust backend should be the canonical owner of validation, grouping, overlap resolution, and range-based replacement. The frontend may recompute an optimistic live preview for responsiveness only while in `ANALYZED_READY`, but final copy/export actions should use backend-confirmed output.
 
 ## 7. Detection Strategy
 
@@ -486,7 +514,7 @@ Example: if `Jane Doe` is first assigned `[PERSON_1]`, then the user edits text 
 
 Apply replacements automatically after every completed analysis and after every user edit to the replacement map. The canonical implementation should live in Rust and apply by sorted character ranges, from end to start, not by naive global string replacement. This prevents accidental changes to text outside confirmed spans and preserves offsets during replacement.
 
-The frontend may run the same deterministic algorithm for immediate preview updates, but the backend remains the source of truth. Before copying or exporting, ask the backend to recompute the pseudonymized result from the current source text and replacement groups.
+The frontend may run the same deterministic algorithm for immediate preview updates while in `ANALYZED_READY`, but the backend remains the source of truth. Before copying or exporting, ask the backend to recompute the pseudonymized result from the current source text, expected text hash, and replacement groups.
 
 Provide an optional later feature: "replace all exact matches" for user-approved recurring text missed by the model.
 
@@ -513,7 +541,7 @@ Working layout after the user pastes their own text, edits the source, or intera
 - Right pane: replacement review list
 - Under or beside the source editor, depending on available window width, show the pseudonymized result preview
 
-The result preview should be populated immediately after analysis and update live as the replacement list changes.
+The result preview should be populated immediately after analysis and update live as the replacement list changes only in `ANALYZED_READY`. Source text edits move the UI to `DIRTY_NEEDS_ANALYSIS` and freeze the prior preview as stale until the user clicks `Analyze` again.
 
 Top toolbar:
 
@@ -531,6 +559,7 @@ Left pane states:
 - Empty input
 - Analyzing
 - Analysis complete with highlights
+- Dirty / needs re-analysis with dimmed stale highlights
 - Pseudonymized preview generated immediately after analysis
 - Error state
 
@@ -542,6 +571,7 @@ Right pane states:
 - Findings grouped by type
 - Editable replacement rows
 - Disabled rows stay visible but muted
+- Stale rows visible but disabled in `DIRTY_NEEDS_ANALYSIS`
 
 ### Highlight Behavior
 
@@ -559,13 +589,13 @@ Initial command surface:
 async fn analyze_text(text: String) -> Result<AnalysisResult, AppError>;
 
 #[tauri::command]
-async fn apply_replacements(text: String, groups: Vec<ReplacementGroup>) -> Result<String, AppError>;
+async fn apply_replacements(text: String, expected_text_hash: String, groups: Vec<ReplacementGroup>) -> Result<String, AppError>;
 
 #[tauri::command]
 async fn create_manual_finding(text: String, start: usize, end: usize, type_: SensitiveType) -> Result<Finding, AppError>;
 
 #[tauri::command]
-async fn recompute_analysis(text: String, findings: Vec<Finding>, groups: Vec<ReplacementGroup>) -> Result<AnalysisResult, AppError>;
+async fn recompute_analysis(text: String, expected_text_hash: String, findings: Vec<Finding>, groups: Vec<ReplacementGroup>, replacement_memory: ReplacementMemory) -> Result<AnalysisResult, AppError>;
 
 #[tauri::command]
 async fn get_model_status() -> Result<ModelStatus, AppError>;
@@ -598,7 +628,7 @@ async fn get_audit_log_status() -> Result<AuditLogStatus, AppError>;
 async fn record_analysis_event(event: AnalysisAuditEvent) -> Result<(), AppError>;
 ```
 
-The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, and session `ReplacementMemory`. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result.
+The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits while in `ANALYZED_READY`. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, session `ReplacementMemory`, and expected text hash. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result. Backend commands that depend on a prior analysis must reject mismatched `expected_text_hash`.
 
 `LicenseStatus` should distinguish `Free`, `Trial`, `ProSubscription`, `ProPerpetual`, `Firm`, and `Enterprise`. Trial state should include an expiry timestamp and must transition to `Free` on expiry rather than locking the app. Subscription state should include renewal status/date. Perpetual state should include `maintenanceActive` and `updateEligibleUntil` so the app can keep running while only updates become gated. Firm and Enterprise states should expose only the entitlements needed by the app, not license-server internals.
 
@@ -849,6 +879,8 @@ The admin console path is reserved for Firm and Enterprise tiers, but it should 
 
 Frontend:
 
+- analysis state transitions: `SAMPLE_READY`, `EMPTY`, `DIRTY_NEEDS_ANALYSIS`, `ANALYZING`, `ANALYZED_READY`, and `ERROR`
+- editing source text after analysis dims stale highlights, freezes stale preview, disables replacement editing/manual marking/copy, and shows `Review paused · analyze again`
 - text chunking preserves offsets
 - grouping repeated findings
 - suggested replacement numbering
@@ -876,6 +908,7 @@ Rust:
 - overlap resolver fixtures for deterministic-vs-deterministic conflicts, email-vs-URL/domain overlap, date-inside-ID overlap, LLM partial overlap, same-span type disagreement, manual override, and longer-contained-span wins
 - canonical grouping and replacement application from end to start
 - manual finding validation for selected ranges
+- stale text hash rejection for apply/recompute/copy paths
 - license status and activation state handling without user text
 - sidecar status handling
 - `pseudo-cli analyze < input.txt > output.json` returns deterministic findings and replacement groups without launching the UI
@@ -891,12 +924,14 @@ Python:
 - fresh install, no model, no license: open app and immediately see an already-analyzed confidential-work sample with highlights, grouped replacements, before/after preview, readiness summary, locality proof, and enabled `Copy result`
 - click `Try your own text`, clear the sample, focus the editor, and show `Paste confidential text. No text or results are sent.`
 - paste sample text
+- verify pasted or edited text enters `DIRTY_NEEDS_ANALYSIS` without auto-analysis
 - run deterministic-only analysis on user-provided text without model setup
 - run deterministic-only analysis
+- edit analyzed source text and verify stale highlights are dimmed, copy is disabled, and `Analyze` is primary
 - show highlights
 - mark selected text as sensitive
 - edit replacement
-- verify pseudonymized preview updates automatically
+- verify pseudonymized preview updates automatically after replacement edits while in `ANALYZED_READY`
 - verify readiness summary reflects enabled, disabled, ignored, and review-needed findings
 - copy backend-confirmed final result and show `Pseudonymized text copied · no text or results sent`
 - optional model download completes and enables local LLM analysis
