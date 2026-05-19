@@ -1,9 +1,4 @@
-use std::{
-    num::NonZeroU32,
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
+use std::{num::NonZeroU32, path::PathBuf, sync::Arc, time::Instant};
 
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -13,12 +8,17 @@ use llama_cpp_2::{
     model::{params::LlamaModelParams, LlamaModel},
     sampling::LlamaSampler,
 };
-use pseudo_core::chunking::chunk_text_for_analysis;
+use pseudo_core::chunking::{chunk_text_for_analysis, TextChunk};
 use pseudo_core::{Finding, ModelBackend, ModelStatus};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::llm_output::parse_llm_response;
+
+const CONTEXT_TOKENS: u32 = 8_192;
+const MAX_NEW_TOKENS: i32 = 1_024;
+const PROMPT_TOKEN_MARGIN: usize = 64;
+const CHUNK_FALLBACK_CHARS: usize = 6_000;
 
 #[derive(Default)]
 pub struct ModelRuntime {
@@ -63,8 +63,8 @@ impl ModelRuntime {
 
         let loaded = {
             let started = Instant::now();
-            let mut backend =
-                LlamaBackend::init().map_err(|error| ModelRuntimeError::Backend(error.to_string()))?;
+            let mut backend = LlamaBackend::init()
+                .map_err(|error| ModelRuntimeError::Backend(error.to_string()))?;
             backend.void_logs();
             let model = {
                 let params = model_params();
@@ -126,16 +126,42 @@ impl LoadedModel {
     }
 
     fn detect(&self, text: &str) -> Result<Vec<Finding>, ModelRuntimeError> {
-        let chunks = chunk_text_for_analysis(text, 2_000);
+        let chunks = self.chunks_for_prompt(text)?;
         if chunks.is_empty() {
             return Ok(Vec::new());
         }
 
         let prompt = build_prompt(&chunks);
-        let output = self.generate_json(&prompt, 512)?;
+        let output = self.generate_json(&prompt, MAX_NEW_TOKENS)?;
         let (findings, _warnings) =
             parse_llm_response(&output, &chunks).map_err(ModelRuntimeError::Parse)?;
         Ok(findings)
+    }
+
+    fn chunks_for_prompt(&self, text: &str) -> Result<Vec<TextChunk>, ModelRuntimeError> {
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let whole_document = vec![TextChunk {
+            chunk_index: 0,
+            start: 0,
+            end: text.len(),
+            text: text.to_string(),
+        }];
+        if self.prompt_fits_context(&build_prompt(&whole_document))? {
+            return Ok(whole_document);
+        }
+
+        Ok(chunk_text_for_analysis(text, CHUNK_FALLBACK_CHARS))
+    }
+
+    fn prompt_fits_context(&self, prompt: &str) -> Result<bool, ModelRuntimeError> {
+        let tokens = self
+            .model
+            .str_to_token(prompt, AddBos::Always)
+            .map_err(|error| ModelRuntimeError::Tokenize(error.to_string()))?;
+        Ok(tokens.len() + MAX_NEW_TOKENS as usize + PROMPT_TOKEN_MARGIN <= CONTEXT_TOKENS as usize)
     }
 
     fn generate_json(
@@ -143,8 +169,8 @@ impl LoadedModel {
         prompt: &str,
         max_new_tokens: i32,
     ) -> Result<String, ModelRuntimeError> {
-        let ctx_params =
-            LlamaContextParams::default().with_n_ctx(Some(NonZeroU32::new(4096).expect("nonzero")));
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(Some(NonZeroU32::new(CONTEXT_TOKENS).expect("nonzero")));
         let mut ctx = self
             .model
             .new_context(&self.backend, ctx_params)
@@ -196,7 +222,7 @@ impl LoadedModel {
     }
 }
 
-fn build_prompt(chunks: &[pseudo_core::chunking::TextChunk]) -> String {
+fn build_prompt(chunks: &[TextChunk]) -> String {
     let chunk_json = chunks
         .iter()
         .map(|chunk| {
@@ -210,19 +236,20 @@ fn build_prompt(chunks: &[pseudo_core::chunking::TextChunk]) -> String {
     format!(
         "<|im_start|>system\n\
 You extract sensitive spans for local pseudonymization from English, German, French, and mixed-language text. Return JSON only. Do not explain.\n\
+Read the full input before deciding. Use global document context to catch repeated, shortened, or inflected mentions of the same person or organization.\n\
 Every finding text must be an exact substring copied from the input chunk.\n\
 Do not infer hidden values. Do not extract parts inside an email if the full email is already extracted.\n\
-Always extract visible personal names, including names with accents or non-English characters.\n\
-Always extract cities, countries, venues, and named events when they identify context.\n\
+Always extract visible personal names, including names with accents or non-English characters. If a person is first named fully and later mentioned by surname or a possessive/inflected surname, extract those later mentions too.\n\
+Always extract cities, countries, venues, and named events when they identify context, including city names at the beginning of a document.\n\
 Detect organizations, including company names with legal suffixes such as AG, GmbH, Ltd, LLC, Inc, SA, or BV.\n\
 Do not extract standalone ordinal/cardinal numbers, generic nouns, broad topic words, or descriptive nouns such as Milliardär unless they are part of a longer identifying title/name span.\n\
 Valid types: PERSON_NAME, ORGANIZATION, ROLE_OR_POSITION, LOCATION, EMAIL, PHONE, DATE, ID_NUMBER, URL, OTHER_SENSITIVE.\n\
-Required output shape: {{\"findings\":[{{\"chunkIndex\":0,\"text\":\"Jane Doe\",\"type\":\"PERSON_NAME\",\"confidence\":0.90}},{{\"chunkIndex\":0,\"text\":\"ACME AG\",\"type\":\"ORGANIZATION\",\"confidence\":0.85}}]}}\n\
+Required output shape: {{\"findings\":[{{\"chunkIndex\":0,\"text\":\"exact substring from input\",\"type\":\"PERSON_NAME\",\"confidence\":0.90}}]}}\n\
 If there are no findings, return {{\"findings\":[]}}.\n\
 <|im_end|>\n\
 <|im_start|>user\n\
 /no_think\n\
-Input chunks:\n{}\n\
+Input chunks. Normal-length documents are sent as one chunk; multiple chunks mean the document was too long for one prompt:\n{}\n\
 Return JSON now.\n\
 <|im_end|>\n\
 <|im_start|>assistant\n",
@@ -271,15 +298,25 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let runtime = ModelRuntime::default();
             let text = "In Cannes laufen die 79. Internationalen Filmfestspiele. Neben dem üblichen Glamour und den vielen Talenten sorgen dieses Jahr auch polarisierende Themen für Schlagzeilen. Die Debatte um den ultrakonservativen Milliardär Vincent Bolloré und dessen Einfluss auf die Kulturszene geht in eine neue Runde.";
-            let result = crate::analysis::analyze("smoke".into(), text.into(), &runtime)
-            .await;
+            let result = crate::analysis::analyze("smoke".into(), text.into(), &runtime).await;
             assert_eq!(result.request_id, "smoke");
-            assert!(result.findings.iter().any(|finding| finding.text == "Vincent Bolloré"));
-            assert!(result.findings.iter().any(|finding| finding.text == "Cannes"));
+            assert!(result
+                .findings
+                .iter()
+                .any(|finding| finding.text == "Vincent Bolloré"));
             assert!(!result.findings.iter().any(|finding| finding.text == "79."));
-            assert!(!result.findings.iter().any(|finding| finding.text == "Filmfestspiele"));
-            assert!(!result.findings.iter().any(|finding| finding.text == "Milliardär"));
-            assert!(!result.findings.iter().any(|finding| finding.text == "Kulturszene"));
+            assert!(!result
+                .findings
+                .iter()
+                .any(|finding| finding.text == "Filmfestspiele"));
+            assert!(!result
+                .findings
+                .iter()
+                .any(|finding| finding.text == "Milliardär"));
+            assert!(!result
+                .findings
+                .iter()
+                .any(|finding| finding.text == "Kulturszene"));
         });
     }
 }

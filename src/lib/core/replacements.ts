@@ -21,12 +21,11 @@ export function normalizeOriginal(text: string): string {
 export function buildGroups(findings: Finding[]): ReplacementGroup[] {
   const sorted = [...findings].sort((a, b) => a.start - b.start || a.end - b.end);
   const counters = new Map<SensitiveType, number>();
-  const groups = new Map<string, ReplacementGroup>();
+  const groups: ReplacementGroup[] = [];
 
   for (const finding of sorted) {
     const normalized = normalizeOriginal(finding.text);
-    const key = `${finding.type}:${normalized}`;
-    const existing = groups.get(key);
+    const existing = groups.find((group) => shouldGroup(group, finding.type, normalized));
     if (existing) {
       existing.findingIds.push(finding.id);
       continue;
@@ -34,8 +33,8 @@ export function buildGroups(findings: Finding[]): ReplacementGroup[] {
 
     const next = (counters.get(finding.type) ?? 0) + 1;
     counters.set(finding.type, next);
-    groups.set(key, {
-      id: `group-${groups.size + 1}`,
+    groups.push({
+      id: `group-${groups.length + 1}`,
       type: finding.type,
       original: finding.text,
       normalizedOriginal: normalized,
@@ -45,7 +44,7 @@ export function buildGroups(findings: Finding[]): ReplacementGroup[] {
     });
   }
 
-  return [...groups.values()];
+  return groups;
 }
 
 export function applyReplacements(
@@ -72,4 +71,26 @@ export function applyReplacements(
     output = `${output.slice(0, start)}${replacement}${output.slice(end)}`;
   }
   return output;
+}
+
+function shouldGroup(group: ReplacementGroup, type: SensitiveType, normalized: string): boolean {
+  if (group.type !== type) return false;
+  if (group.normalizedOriginal === normalized) return true;
+  if (type !== "PERSON_NAME") return false;
+
+  const groupAlias = personAliasKey(group.normalizedOriginal);
+  const findingAlias = personAliasKey(normalized);
+  if (!groupAlias || groupAlias !== findingAlias) return false;
+
+  const groupSimple = stripTrailingSTokens(group.normalizedOriginal);
+  const findingSimple = stripTrailingSTokens(normalized);
+  return groupSimple.includes(findingSimple) || findingSimple.includes(groupSimple);
+}
+
+function personAliasKey(value: string): string {
+  return (value.split(/\s+/).at(-1) ?? value).replace(/s$/, "");
+}
+
+function stripTrailingSTokens(value: string): string {
+  return value.split(/\s+/).map((token) => token.replace(/s$/, "")).join(" ");
 }

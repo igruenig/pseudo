@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::types::{Finding, ReplacementGroup, SensitiveType};
 
 pub fn normalize_original(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub fn build_groups(findings: &[Finding]) -> Vec<ReplacementGroup> {
@@ -17,7 +20,7 @@ pub fn build_groups(findings: &[Finding]) -> Vec<ReplacementGroup> {
         let normalized = normalize_original(&finding.text);
         if let Some(group) = groups
             .iter_mut()
-            .find(|group| group.r#type == finding.r#type && group.normalized_original == normalized)
+            .find(|group| should_group(group, finding.r#type, &normalized))
         {
             group.finding_ids.push(finding.id);
             continue;
@@ -37,6 +40,44 @@ pub fn build_groups(findings: &[Finding]) -> Vec<ReplacementGroup> {
     }
 
     groups
+}
+
+fn should_group(group: &ReplacementGroup, r#type: SensitiveType, normalized: &str) -> bool {
+    if group.r#type != r#type {
+        return false;
+    }
+    if group.normalized_original == normalized {
+        return true;
+    }
+    if r#type != SensitiveType::PersonName {
+        return false;
+    }
+
+    let group_alias = person_alias_key(&group.normalized_original);
+    let finding_alias = person_alias_key(normalized);
+    if group_alias.is_empty() || group_alias != finding_alias {
+        return false;
+    }
+    let group_simple = strip_trailing_s_tokens(&group.normalized_original);
+    let finding_simple = strip_trailing_s_tokens(normalized);
+    group_simple.contains(&finding_simple) || finding_simple.contains(&group_simple)
+}
+
+fn person_alias_key(value: &str) -> String {
+    value
+        .split_whitespace()
+        .last()
+        .unwrap_or(value)
+        .trim_end_matches('s')
+        .to_string()
+}
+
+fn strip_trailing_s_tokens(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(|token| token.trim_end_matches('s'))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn replacement_for(r#type: SensitiveType, index: usize) -> String {
@@ -71,6 +112,25 @@ mod tests {
         let groups = build_groups(&findings);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].finding_ids.len(), 2);
+    }
+
+    #[test]
+    fn groups_person_surname_aliases() {
+        let findings = vec![
+            finding("Vincent Bolloré", 0),
+            finding("Bolloré", 30),
+            finding("Bollorés", 60),
+        ];
+        let groups = build_groups(&findings);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].finding_ids.len(), 3);
+    }
+
+    #[test]
+    fn does_not_group_different_people_with_same_surname() {
+        let findings = vec![finding("John Smith", 0), finding("Mary Smith", 20)];
+        let groups = build_groups(&findings);
+        assert_eq!(groups.len(), 2);
     }
 
     fn finding(text: &str, start: usize) -> Finding {
