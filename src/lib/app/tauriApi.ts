@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { byteRangeToStringRange, stringIndexToByteOffset } from "../core/offsets";
 import type { AnalysisResult, Finding, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType } from "../core/types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
@@ -27,17 +28,18 @@ export async function createManualFinding(
   type: SensitiveType
 ): Promise<Finding> {
   if (!isTauri) {
+    const range = byteRangeToStringRange(text, start, end);
     return {
       id: `manual-${Date.now()}`,
       type,
       start,
       end,
-      text: text.slice(start, end),
+      text: text.slice(range.start, range.end),
       source: "MANUAL",
       confidence: 1
     };
   }
-  return invoke("create_manual_finding", { requestId, text, start, end, type_ : type });
+  return invoke("create_manual_finding", { requestId, text, start, end, type_: type });
 }
 
 export async function getModelStatus(): Promise<ModelStatus> {
@@ -90,11 +92,13 @@ async function mockAnalyze(requestId: string, text: string): Promise<AnalysisRes
   const urlRe = /\b(?:https?:\/\/|www\.)\S+/gi;
   for (const re of [emailRe, urlRe]) {
     for (const match of text.matchAll(re)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
       findings.push({
         id: `finding-${findings.length + 1}`,
         type: match[0].includes("@") ? "EMAIL" : "URL",
-        start: match.index ?? 0,
-        end: (match.index ?? 0) + match[0].length,
+        start: stringIndexToByteOffset(text, start),
+        end: stringIndexToByteOffset(text, end),
         text: match[0],
         source: "DETERMINISTIC",
         confidence: 1

@@ -1,4 +1,5 @@
 import type { Finding, ReplacementGroup, SensitiveType } from "./types";
+import { byteRangeToStringRange } from "./offsets";
 
 const TYPE_PREFIX: Record<SensitiveType, string> = {
   PERSON_NAME: "PERSON",
@@ -59,13 +60,16 @@ export function applyReplacements(
       group.findingIds
         .map((id) => findingById.get(id))
         .filter((finding): finding is Finding => Boolean(finding))
-        .map((finding) => ({ finding, replacement: group.replacement }))
+        .map((finding) => ({
+          ...byteRangeToStringRange(text, finding.start, finding.end),
+          replacement: group.replacement
+        }))
     )
-    .sort((a, b) => b.finding.start - a.finding.start);
+    .sort((a, b) => b.start - a.start);
 
   let output = text;
-  for (const { finding, replacement } of ranges) {
-    output = `${output.slice(0, finding.start)}${replacement}${output.slice(finding.end)}`;
+  for (const { start, end, replacement } of ranges) {
+    output = `${output.slice(0, start)}${replacement}${output.slice(end)}`;
   }
   return output;
 }

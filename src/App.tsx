@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { analyzeText, applyReplacementsBackend, cancelModelDownload, createManualFinding, getModelDownloadStatus, getModelStatus, startModelDownload } from "./lib/app/tauriApi";
 import { formatDownloadStatus } from "./lib/app/modelDownloadStatus";
 import { formatModelStatus } from "./lib/app/modelStatus";
+import { stringIndexToByteOffset } from "./lib/core/offsets";
 import { buildPreview } from "./lib/core/preview";
 import { hashText, readinessLabel } from "./lib/core/state";
 import type { AnalysisResult, AnalysisStateName, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType } from "./lib/core/types";
@@ -112,7 +113,13 @@ export default function App() {
     const start = editorRef.current?.selectionStart ?? -1;
     const end = editorRef.current?.selectionEnd ?? -1;
     if (!result || start < 0 || end <= start) return;
-    const finding = await createManualFinding(crypto.randomUUID(), text, start, end, manualType);
+    const finding = await createManualFinding(
+      crypto.randomUUID(),
+      text,
+      stringIndexToByteOffset(text, start),
+      stringIndexToByteOffset(text, end),
+      manualType
+    );
     const nextResult = { ...result, findings: [...result.findings, finding] };
     setResult(nextResult);
     setGroups((await import("./lib/core/replacements")).buildGroups(nextResult.findings));

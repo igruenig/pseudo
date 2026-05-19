@@ -15,6 +15,7 @@ export type FindingSource = "DETERMINISTIC" | "LLM" | "MANUAL";
 export type Finding = {
   id: string;
   type: SensitiveType;
+  // Offsets are UTF-8 byte offsets from Rust. Convert before slicing JavaScript strings.
   start: number;
   end: number;
   text: string;
