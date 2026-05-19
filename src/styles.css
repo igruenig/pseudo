@@ -10,8 +10,15 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  overflow: hidden;
 }
 
 button,
@@ -43,8 +50,11 @@ button.primary {
 }
 
 .app-shell {
-  min-height: 100vh;
-  padding: 18px 22px 28px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 18px 22px 0;
+  overflow: hidden;
 }
 
 .toolbar {
@@ -83,16 +93,19 @@ button.primary {
 }
 
 .document-shell {
+  flex: 1;
   max-width: 1040px;
-  min-height: calc(100vh - 134px);
+  width: 100%;
+  min-height: 0;
   margin: 0 auto;
-  padding: 18px 0 0;
+  padding: 18px 0 28px;
+  overflow: auto;
 }
 
 .document-shell textarea,
 .review-surface {
   width: 100%;
-  min-height: calc(100vh - 164px);
+  min-height: 100%;
   margin: 0;
   border: 1px solid #d1cbbf;
   border-radius: 8px;
@@ -204,7 +217,7 @@ button.primary {
 
 @media (max-width: 760px) {
   .app-shell {
-    padding: 14px;
+    padding: 14px 14px 0;
   }
 
   .toolbar {
@@ -227,12 +240,12 @@ button.primary {
   }
 
   .document-shell {
-    min-height: calc(100vh - 196px);
+    min-height: 0;
+    padding-bottom: 18px;
   }
 
   .document-shell textarea,
   .review-surface {
-    min-height: calc(100vh - 220px);
     padding: 18px;
     font-size: 16px;
   }
