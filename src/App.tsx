@@ -133,7 +133,7 @@ export default function App() {
       </header>
 
       <section className="model-strip">
-        <span>{formatModelStatus(modelStatus)}</span>
+        <span>{formatModelStatus(modelStatus, downloadStatus)}</span>
         <span>{downloadStatus ? formatDownloadStatus(downloadStatus) : "Checking model..."}</span>
         {downloadStatus?.state === "downloading" ? (
           <button onClick={handleCancelDownload}>Cancel</button>

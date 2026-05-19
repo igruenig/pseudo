@@ -2,7 +2,7 @@ import type { ModelDownloadStatus } from "../core/types";
 
 export function formatDownloadStatus(status: ModelDownloadStatus): string {
   if (status.state === "not_started") return "Model not downloaded";
-  if (status.state === "complete") return "Model downloaded";
+  if (status.state === "complete") return "Downloaded";
   if (status.state === "cancelled") return "Download cancelled";
   if (status.state === "error") return status.error ?? "Download failed";
   const total = status.totalBytes ? ` / ${formatBytes(status.totalBytes)}` : "";
