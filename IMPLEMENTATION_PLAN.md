@@ -16,14 +16,15 @@ Privacy invariant: user content never leaves the machine. No source text, detect
 2. User pastes confidential text.
 3. The pasted or edited text enters `DIRTY_NEEDS_ANALYSIS`; analysis does not run automatically in v0.
 4. User clicks `Analyze`.
-5. Rust backend runs the email/URL deterministic pre-pass and local LLM analysis.
-6. Backend returns findings, replacement groups, and an initial pseudonymized preview.
-7. UI highlights findings in source text, shows replacement groups, and renders the pseudonymized preview.
-8. User edits replacement labels, disables replacements, or manually marks missed spans.
-9. Preview updates locally after replacement edits.
-10. User clicks `Copy result`.
-11. Backend recomputes the final result against the current source text hash and replacement groups.
-12. UI copies the backend-confirmed pseudonymized text.
+5. If the model is missing, the app offers to download the GGUF file into the app-managed model directory.
+6. Rust backend runs the email/URL deterministic pre-pass and local LLM analysis.
+7. Backend returns findings, replacement groups, and an initial pseudonymized preview.
+8. UI highlights findings in source text, shows replacement groups, and renders the pseudonymized preview.
+9. User edits replacement labels, disables replacements, or manually marks missed spans.
+10. Preview updates locally after replacement edits.
+11. User clicks `Copy result`.
+12. Backend recomputes the final result against the current source text hash and replacement groups.
+13. UI copies the backend-confirmed pseudonymized text.
 
 ### Analysis State Model
 
@@ -109,7 +110,8 @@ v0 uses Q4_K_M only. Current target: `ggml-org/Qwen3-1.7B-GGUF:Q4_K_M`, unless t
 Backend strategy for v0:
 
 - macOS: Metal backend, especially for Apple Silicon.
-- Windows/Linux: CPU backend.
+- Windows x86_64: CPU backend. Windows support is required in v0 because the app should be sendable as a small installer or archive.
+- Linux CPU support can follow the same path, but it is not required for the first handoff.
 
 Licensing notes to retain in product docs:
 
@@ -439,6 +441,12 @@ Top toolbar:
 - `Clear`: clears source text, findings, groups, preview, and in-memory state.
 - `Copy result`: enabled only when the backend-confirmed result matches the current text hash and group state is valid.
 
+Missing model state:
+
+- If the model is missing, show a compact local-model panel with model name, approximate download size, destination folder, and a `Download model` action.
+- The app must remain small enough to send directly; the model is downloaded after install.
+- Model download UI must never ask for an account and must not mention pricing, trials, or activation.
+
 Left pane states:
 
 - Empty input: plain placeholder such as `Paste text here`.
@@ -479,11 +487,22 @@ async fn unload_model() -> Result<(), AppError>;
 
 #[tauri::command]
 async fn get_model_status() -> Result<ModelStatus, AppError>;
+
+#[tauri::command]
+async fn get_model_download_status() -> Result<ModelDownloadStatus, AppError>;
+
+#[tauri::command]
+async fn start_model_download() -> Result<ModelDownloadStatus, AppError>;
+
+#[tauri::command]
+async fn cancel_model_download() -> Result<ModelDownloadStatus, AppError>;
 ```
 
 The frontend should call `analyze_text`, receive findings and replacement groups, show the backend-generated initial pseudonymized preview, and keep an optimistic preview in sync with replacement edits while in `ANALYZED_READY`. Manual marking should call `create_manual_finding`, append the returned finding, then call `recompute_analysis` with the explicit current findings, groups, and expected text hash. `Copy result` should call `apply_replacements` first and copy the backend-confirmed result. Backend commands that depend on a prior analysis must reject mismatched `expected_text_hash`. `request_id` is echoed back by the frontend command wrapper or response envelope so stale responses can be ignored.
 
 `ModelStatus` should expose `{ loaded: boolean, modelPath?: string, quantization?: string, backend: "metal" | "cpu", loadMs?: number, residentMemoryMb?: number }`. Model lifecycle is in-process and owned by the Rust app/runtime layer.
+
+`ModelDownloadStatus` should expose `{ state: "not_started" | "downloading" | "complete" | "error" | "cancelled", modelName: string, destinationPath: string, bytesDownloaded: number, totalBytes?: number, error?: string }`. It must never include user text or analysis metadata.
 
 ## 11. Local Model Service (In-Process)
 
@@ -492,6 +511,7 @@ Inference runs inside the Tauri app crate, or a dedicated closed `pseudo-runtime
 Responsibilities:
 
 - Locate the local GGUF file.
+- Download the v0 GGUF file into the app-managed model directory when missing and explicitly requested by the user.
 - Load the model on first analysis, not at app launch, so cold start stays fast.
 - Unload on app quit. Idle-unload tuning is out of scope for v0.
 - Run inference with a JSON-grammar-constrained sampler using llama.cpp GBNF grammars so responses stay schema-conformant.
@@ -526,7 +546,17 @@ The runtime should resolve the model path in this order:
 2. `PSEUDO_MODEL_PATH`.
 3. App-managed model directory.
 
-v0 does not include a model download manager. The user receives the GGUF file directly. A download manager will be added when the product is distributed beyond hand-delivery.
+### Model Download Manager
+
+v0 includes a minimal model download manager so the app can be sent as a small binary without bundling the GGUF file.
+
+- Download the selected Q4_K_M GGUF file from Hugging Face into the app-managed model directory.
+- Start only after explicit user action from the missing-model state.
+- Show model name, approximate size, destination folder, progress, and errors.
+- Support cancellation. Resume is nice to have, but not required for the first handoff.
+- Validate the completed file with a pinned size and checksum or manifest before loading it.
+- Store upstream license metadata alongside the model file when practical.
+- Never send user content, findings, prompts, replacement maps, or pseudonymized output during model download.
 
 ### Memory, Lifecycle, and Concurrency
 
@@ -548,7 +578,8 @@ Pricing, licensing, trials, and tier-gating are out of scope for v0. The current
 - Do not persist pasted text unless the user explicitly saves a project later.
 - Do not log user text in Rust or the frontend console.
 - Never send user content or pseudonymization artifacts to any network service. This includes pasted text, imported document content, saved project content, manually marked text, findings, replacement maps, and pseudonymized output.
-- Non-content network features added later, such as model download, update checks, or commercial activation, must live outside `pseudo-core`.
+- Model download is the only v0 network feature. It must live outside `pseudo-core` and send no user content or pseudonymization artifacts.
+- Non-content network features added later, such as update checks or commercial activation, must live outside `pseudo-core`.
 - `pseudo-core` must make no network calls of any kind. It must not include update checks, license checks, model downloads, crash reporting, telemetry, HTTP clients, socket clients, or model runtime orchestration.
 - All network activity must live in the outer app/runtime crates and be auditable at that boundary.
 - The local model runs in-process. No localhost ports are opened.
@@ -582,6 +613,7 @@ pseudo/
       app/
         tauriApi.ts
         modelStatus.ts
+        modelDownloadStatus.ts
   src-tauri/
     Cargo.toml
     tauri.conf.json
@@ -606,6 +638,7 @@ pseudo/
         main.rs
         commands.rs
         analysis.rs
+        model_download.rs
         model_runtime.rs
   deny.toml
   docs/
@@ -616,7 +649,7 @@ This repository currently contains the plan at the root. Once the app scaffold e
 
 `pseudo-core` should be independently buildable and testable. The Tauri app crate and `pseudo-cli` should depend on it as consumers rather than duplicating deterministic logic. The CLI should be usable in CI for end-to-end deterministic analysis tests without launching the desktop UI.
 
-`src-tauri/app/src/model_runtime.rs` owns the `llama-cpp-2` integration, model lifecycle, GBNF grammar definition, and inference loop. If this code grows beyond roughly 1000 LOC, move it into a dedicated closed `src-tauri/pseudo-runtime` crate so `app/` stays focused on commands and orchestration. Do not move inference code into `pseudo-core`.
+`src-tauri/app/src/model_runtime.rs` owns the `llama-cpp-2` integration, model lifecycle, GBNF grammar definition, and inference loop. `src-tauri/app/src/model_download.rs` owns the minimal Hugging Face download flow, checksum validation, and app-managed model directory. If runtime code grows beyond roughly 1000 LOC, move it into a dedicated closed `src-tauri/pseudo-runtime` crate so `app/` stays focused on commands and orchestration. Do not move inference or download code into `pseudo-core`.
 
 ## 15. Testing Plan
 
@@ -652,6 +685,7 @@ Rust:
 - manual finding validation for selected ranges
 - stale text hash rejection for apply/recompute/copy paths
 - model runtime status handling for loaded/unloaded/backend/quantization/load time/resident memory
+- model download status handling, cancellation, checksum/manifest validation, and no-content request construction
 - `app::model_runtime` or `pseudo-runtime` loads a fixture GGUF model and returns valid JSON for a known chunk
 - GBNF grammar produces only schema-conformant JSON across a representative test set
 - first LLM-assisted analysis cold-load completes under a documented reference budget
@@ -667,6 +701,8 @@ Rust:
 - disable a replacement and see preview restore the original span
 - copy backend-confirmed final result
 - model load failure falls back to deterministic/manual behavior without losing the user's source text
+- missing model state can download the model, validate it, store it in the app-managed directory, and then run analysis without app restart
+- Windows CPU build opens, downloads the model, and runs one LLM-assisted analysis on a reference Windows machine
 
 ## 16. Build Plan
 
@@ -679,28 +715,31 @@ Rust:
 - Implement minimal deterministic detectors, email and URL only, in `pseudo-core`.
 - Implement basic offset-preserving chunking in `pseudo-core`.
 - Add `llama-cpp-2` integration in `model_runtime.rs` from the start.
+- Add the minimal model downloader in `model_download.rs` from the start so the app can be sent without a bundled GGUF file.
 - Implement GBNF grammar constraining LLM output to the `{findings: [...]}` schema.
-- Implement the seven Tauri commands listed in Section 10.
+- Implement the Tauri commands listed in Section 10.
 - Implement the main layout: source editor with highlights, replacement panel, pseudonymized preview, and top toolbar with `Analyze`, `Clear`, and `Copy`.
+- Implement the missing-model/download UI.
 - Implement manual `Mark sensitive` selection-to-finding flow.
 - Implement the five-state analysis state machine from Section 2.
 - Implement deterministic readiness summary.
 - Wire frontend optimistic preview with backend reconciliation on copy.
 - Implement copy-to-clipboard.
 - Add tests listed in Section 15.
+- Build and smoke-test macOS Apple Silicon and Windows x86_64 CPU artifacts.
 
-Deliverable: a hand-delivered LLM-first local pseudonymization tool that the test user can use on real work.
+Deliverable: a small LLM-first local pseudonymization app that can be sent to the test user, download its own model, and run on Windows.
 
 ### Future Work
 
-- Model download manager and signed installers for distribution.
+- Signed installers for broader distribution.
 - License activation, trial mechanics, and paid tier UI.
 - Bilingual detectors, including German month names, Swiss/German phone formats, and contextual ID labels.
 - Phone, date, and ID deterministic detectors.
 - Replacement memory across re-analysis within a session.
 - First-run sample experience for unknown users.
 - Type filters, confidence badges, ignore action, and reset-to-suggested.
-- Settings screen, model path config, idle-unload tuning, and backend selection UI.
+- Settings screen, idle-unload tuning, and backend selection UI.
 - Audit logging for Firm/Enterprise.
 - Possible open-source release of `pseudo-core` and `pseudo-cli` if buyer auditability becomes important.
 - Firm and Enterprise features, including admin console, SSO, and on-prem license server.
@@ -731,7 +770,9 @@ Mitigation:
 Mitigation:
 
 - Use `llama-cpp-2`, Rust bindings to llama.cpp, for in-process inference. No Python runtime is bundled.
-- For v0, hand-deliver the model file instead of building a download manager.
+- Keep the app small by downloading the model after install instead of bundling the GGUF file.
+- Keep the v0 downloader minimal: explicit user action, progress, cancellation, checksum/manifest validation, and clear errors.
+- Smoke-test the Windows x86_64 CPU build on a real Windows machine before sending it.
 - Keep model runtime behind a small `model_runtime.rs` boundary so later packaging work is isolated.
 - Preserve license metadata for the selected GGUF file and runtime dependencies.
 
@@ -768,11 +809,13 @@ Mitigation:
 8. Implement basic offset-preserving chunking.
 9. Implement manual finding validation.
 10. Add `llama-cpp-2` to the app crate with a `model_runtime` module.
-11. Implement GBNF grammar for the `{findings: [...]}` schema and unit-test it against a fixture model.
-12. Implement the seven Tauri commands.
-13. Build the main UI: editor with highlights, replacement panel, pseudonymized preview, toolbar.
-14. Implement manual `Mark sensitive` flow.
-15. Wire optimistic preview plus backend-reconciled copy.
-16. Implement deterministic readiness summary.
-17. Add unit tests for state transitions, grouping, replacement memory absence, replacement application, manual findings, and stale-hash rejection.
-18. Hand-deliver the build and the GGUF model file to the test user.
+11. Add `model_download.rs` with Hugging Face download, progress status, cancellation, app-managed model directory, and checksum/manifest validation.
+12. Implement GBNF grammar for the `{findings: [...]}` schema and unit-test it against a fixture model.
+13. Implement the Tauri commands from Section 10.
+14. Build the main UI: editor with highlights, replacement panel, pseudonymized preview, toolbar, and missing-model download panel.
+15. Implement manual `Mark sensitive` flow.
+16. Wire optimistic preview plus backend-reconciled copy.
+17. Implement deterministic readiness summary.
+18. Add unit tests for state transitions, grouping, replacement memory absence, replacement application, manual findings, stale-hash rejection, and model download status.
+19. Build macOS and Windows x86_64 CPU artifacts and smoke-test Windows download plus one analysis.
+20. Send the small app build to the test user.
