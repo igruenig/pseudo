@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "identifier": "app.pseudo.local",
   "build": {
-    "beforeDevCommand": "cd ../.. && npm run dev",
-    "beforeBuildCommand": "cd ../.. && npm run build",
+    "beforeDevCommand": "cd .. && npm run dev",
+    "beforeBuildCommand": "cd .. && npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../../dist"
   },
@@ -25,6 +25,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }
