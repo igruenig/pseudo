@@ -152,7 +152,6 @@ button.primary {
   background: #fff2d8;
 }
 
-.entity-popover,
 .selection-toolbar {
   position: fixed;
   z-index: 20;
@@ -161,46 +160,6 @@ button.primary {
   border-radius: 8px;
   background: #fffefa;
   box-shadow: 0 16px 42px rgba(42, 36, 24, 0.18);
-}
-
-.entity-popover {
-  width: min(320px, calc(100vw - 32px));
-  padding: 12px;
-}
-
-.popover-label {
-  color: #6f6a60;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.popover-original {
-  margin-top: 4px;
-  color: #2d2b27;
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.entity-popover input[type="text"],
-.entity-popover input:not([type]) {
-  width: 100%;
-  margin-top: 10px;
-  border: 1px solid #cfc8bb;
-  border-radius: 6px;
-  padding: 8px 9px;
-}
-
-.popover-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  color: #4f4b43;
-  font-size: 13px;
 }
 
 .selection-toolbar {

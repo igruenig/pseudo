@@ -23,8 +23,6 @@ export default function App() {
   const [downloadStatus, setDownloadStatus] = useState<ModelDownloadStatus | null>(null);
   const [copied, setCopied] = useState(false);
   const [manualType, setManualType] = useState<SensitiveType>("PERSON_NAME");
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [popoverPoint, setPopoverPoint] = useState<FloatingPoint | null>(null);
   const [manualSelection, setManualSelection] = useState<ManualSelection | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const documentRef = useRef<HTMLDivElement | null>(null);
@@ -39,10 +37,6 @@ export default function App() {
 
   const inlineSegments = useMemo(() => buildInlineSegments(text, result, groups), [groups, result, text]);
   const readiness = readinessLabel(state, result, groups);
-  const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) ?? null,
-    [groups, selectedGroupId]
-  );
   const showModelStrip = !downloadStatus || downloadStatus.state !== "complete";
 
   useEffect(() => {
@@ -72,7 +66,6 @@ export default function App() {
       setResult(next);
       setGroups(next.groups);
       setAnalyzedText(text);
-      setSelectedGroupId(null);
       setManualSelection(null);
       await refreshModel();
     } catch (err) {
@@ -115,7 +108,6 @@ export default function App() {
     setGroups([]);
     setError(null);
     setCopied(false);
-    setSelectedGroupId(null);
     setManualSelection(null);
   }
 
@@ -123,27 +115,15 @@ export default function App() {
     setAnalyzedText(null);
     setResult(null);
     setGroups([]);
-    setSelectedGroupId(null);
     setManualSelection(null);
-  }
-
-  function updateGroup(id: string, replacement: string) {
-    setGroups((current) => current.map((group) => (group.id === id ? { ...group, replacement } : group)));
   }
 
   function toggleGroup(id: string) {
     setGroups((current) => current.map((group) => (group.id === id ? { ...group, enabled: !group.enabled } : group)));
   }
 
-  function selectGroup(id: string, point: FloatingPoint) {
-    setSelectedGroupId(id);
-    setPopoverPoint(point);
-    setManualSelection(null);
-  }
-
   function handleTextChange(nextText: string) {
     setText(nextText);
-    setSelectedGroupId(null);
     setManualSelection(null);
   }
 
@@ -220,7 +200,6 @@ export default function App() {
     }
 
     const rect = range.getBoundingClientRect();
-    setSelectedGroupId(null);
     setManualSelection({
       start: Math.min(start, end),
       end: Math.max(start, end),
@@ -333,14 +312,11 @@ export default function App() {
                   data-byte-start={segment.byteStart}
                   data-entity="true"
                   key={segment.key}
-                  onClick={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    selectGroup(segment.group.id, {
-                      top: rect.bottom + 8,
-                      left: rect.left + rect.width / 2
-                    });
+                  onClick={() => {
+                    toggleGroup(segment.group.id);
+                    setManualSelection(null);
                   }}
-                  title={`${segment.originalText} · ${segment.finding.type}`}
+                  title={`${segment.originalText} · ${segment.finding.type} · click to ${segment.group.enabled ? "keep original" : "replace"}`}
                   type="button"
                 >
                   {segment.displayText}
@@ -370,26 +346,6 @@ export default function App() {
             {MANUAL_TYPES.map((type) => <option key={type}>{type}</option>)}
           </select>
           <button onClick={markSelection}>Mark</button>
-        </div>
-      ) : null}
-
-      {selectedGroup && popoverPoint ? (
-        <div className="entity-popover" style={{ top: popoverPoint.top, left: popoverPoint.left }}>
-          <div className="popover-label">{selectedGroup.type}</div>
-          <div className="popover-original">{selectedGroup.original}</div>
-          <input
-            autoFocus
-            value={selectedGroup.replacement}
-            onChange={(event) => updateGroup(selectedGroup.id, event.target.value)}
-          />
-          <label className="popover-toggle">
-            <input
-              type="checkbox"
-              checked={selectedGroup.enabled}
-              onChange={() => toggleGroup(selectedGroup.id)}
-            />
-            Replace this group
-          </label>
         </div>
       ) : null}
     </main>
