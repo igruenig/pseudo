@@ -85,10 +85,24 @@ The UI should expose the type labels in human-friendly form, but the internal re
 - Rust backend commands for file-safe local operations and model orchestration
 - Frontend built with React, TypeScript, and Vite
 
+### Open-Source-Ready Core Boundary
+
+Build the deterministic engine as if it may be open-sourced later, but do not open-source it during the first product phases. The goal is to make open-sourcing a switch that can be flipped after paying customers, stable architecture, and the Phase 3 local LLM integration prove the product shape.
+
+- `pseudo-core` owns deterministic detectors, chunking, grouping, range-based replacement, overlap resolution, manual-finding validation, and shared data types.
+- `pseudo-core` must be a pure Rust library with no Tauri dependency, no license checks, no model download code, no sidecar IPC, no telemetry, no auto-update logic, and no network calls of any kind.
+- The Tauri binary crate owns app commands, UI-facing orchestration, license activation, license server URLs, signing-key handling, model download, sidecar IPC, packaging integration, and update mechanisms.
+- Every dependency in `pseudo-core` must be permissively licensed: MIT, Apache-2.0, BSD, ISC, or MPL-2.0. Do not allow GPL or AGPL dependencies in the core.
+- Add `cargo deny` in CI from day one to check dependency licenses and catch accidental policy drift while the codebase is still small.
+- Prefer Apache-2.0 for a future `pseudo-core` release because it includes an explicit patent grant.
+
+Ship a small `pseudo-cli` wrapper around `pseudo-core`, even before any open-source release. A command such as `pseudo-cli analyze < input.txt > output.json` gives integration tests a UI-free path, demonstrates the local deterministic engine, and later becomes a runnable audit artifact for security teams.
+
 ### Frontend
 
 - React + TypeScript
 - State management with local React state first; introduce Zustand only if state becomes awkward
+- Split frontend utility code into `src/lib/core` for shareable types and pure-function helpers, and `src/lib/app` for Tauri-specific glue, settings, licensing, model status, and other closed app integration.
 - Text editor:
   - MVP: controlled textarea plus overlay-based highlighting
   - Later: CodeMirror 6 or TipTap if richer text selection/review is needed
@@ -454,6 +468,7 @@ The frontend should call `analyze_text`, receive findings and replacement groups
 - Expose `/analyze`
 - Return strict JSON
 - Avoid logging user text
+- Stay outside `pseudo-core`; model inference, sidecar IPC, and model orchestration are closed app/runtime concerns unless explicitly opened later.
 
 ### Suggested API
 
@@ -495,10 +510,12 @@ The service should first try:
 2. `PSEUDO_MODEL_PATH`
 3. App-managed model directory
 4. Hugging Face cache lookup for likely Qwen 1.7B model names
-5. Optional model download prompt with clear size, privacy, and license notes, shown after the deterministic/manual app is already usable
+5. Optional model download prompt with clear size, privacy, and license notes, shown only after the user has analyzed their own text
 6. Manual setup error with clear UI message
 
 Do not silently download models. Model setup should be framed as an optional upgrade from deterministic/manual analysis, not as a blocker on first launch. The guided download should show progress, validate the downloaded files, and then run LLM-assisted analysis fully locally. The app should remember the installed model path and support replacing or deleting the local model from settings.
+
+The model-license check is load-bearing. For any named model, including Qwen 1.7B or a later replacement, verify the exact variant's license terms before public shipment. Confirm that the terms permit the intended commercial use, packaging, hosted download, redistribution, caching, and customer deployment flow.
 
 ### Model Download Manager
 
@@ -536,6 +553,8 @@ Recommended trial/free strategy:
 
 Licensing should be privacy-preserving. Activation may contact a license server with license metadata and device/app identifiers, but never pasted text, extracted findings, replacement maps, or pseudonymized results. The app should continue to offer deterministic/manual functionality when offline or unlicensed.
 
+Keep the open-sourceable boundary explicit: the license activation flow, license server URL, signing keys, entitlement checks, paid feature gates, model download manager, auto-update mechanism, sidecar packaging, platform-specific installer logic, and frontend UI all live outside `pseudo-core`. Publishing `pseudo-core` later must not reveal license-validation internals or proprietary product infrastructure.
+
 The app should avoid asking for license activation before the user has interacted with the core workflow. Activation can unlock the LLM-assisted path, longer text limits, or commercial support, but the initial product experience should remain useful, local, and inspectable.
 
 ## 13. Privacy and Security Requirements
@@ -545,6 +564,8 @@ The app should avoid asking for license activation before the user has interacte
 - Do not persist pasted text unless the user explicitly saves a project later.
 - Do not log user text in Rust, Python, or frontend console.
 - Do not send pasted text, findings, replacement maps, or pseudonymized output during license activation, model download, or update checks.
+- `pseudo-core` must make no network calls of any kind. It must not include update checks, license checks, model downloads, crash reporting, telemetry, HTTP clients, socket clients, or sidecar IPC.
+- All network activity must live in the outer app/runtime crates and be auditable at that boundary.
 - Sidecar service should bind only to `127.0.0.1`.
 - Use a random local port or authenticated local token if the sidecar exposes HTTP.
 - Clear in-memory state when the user clicks `Clear`.
@@ -570,28 +591,53 @@ pseudo/
       Toolbar.tsx
       HighlightedText.tsx
     lib/
-      analysisTypes.ts
-      replacement.ts
-      chunkTextForAnalysis.ts
-      tauriApi.ts
+      core/
+        analysisTypes.ts
+        replacement.ts
+        chunkTextForAnalysis.ts
+        sampleAnalysis.ts
+      app/
+        tauriApi.ts
+        licenseStatus.ts
+        modelStatus.ts
   src-tauri/
     Cargo.toml
     tauri.conf.json
-    src/
-      main.rs
-      analysis.rs
-      license.rs
-      model_download.rs
-      model_service.rs
-      rules.rs
+    pseudo-core/
+      Cargo.toml
+      src/
+        lib.rs
+        types.rs
+        rules.rs
+        chunking.rs
+        grouping.rs
+        replacement.rs
+        manual.rs
+        overlap.rs
+    pseudo-cli/
+      Cargo.toml
+      src/
+        main.rs
+    app/
+      Cargo.toml
+      src/
+        main.rs
+        commands.rs
+        analysis.rs
+        license.rs
+        model_download.rs
+        model_service.rs
   sidecar/
     model_service.py
     requirements.txt
+  deny.toml
   docs/
     implementation-plan.md
 ```
 
 This repository currently contains the plan at the root. Once the app scaffold exists, move or copy this document to `docs/implementation-plan.md`.
+
+`pseudo-core` should be independently buildable and testable. The Tauri app crate and `pseudo-cli` should depend on it as consumers rather than duplicating deterministic logic. The CLI should be usable in CI for end-to-end deterministic analysis tests without launching the desktop UI.
 
 ## 15. Testing Plan
 
@@ -605,18 +651,22 @@ Frontend:
 - optimistic pseudonymized preview generation after analysis
 - disabled replacements are skipped
 - selection-to-manual-finding UI behavior
+- `src/lib/core` utilities remain pure and do not import Tauri/app glue
 
 Rust:
 
-- regex detection for structured sensitive info
-- model output validation
-- model download status and checksum/manifest validation
+- `pseudo-core` regex detection for structured sensitive info
+- `pseudo-core` has no Tauri, networking, license, model-download, sidecar, telemetry, or update dependencies
+- `pseudo-core` dependency licenses pass `cargo deny`
+- Tauri app crate model output validation
+- Tauri app crate model download status and checksum/manifest validation
 - exact surface-form matching from LLM output to source ranges
 - overlap resolution
 - canonical grouping and replacement application from end to start
 - manual finding validation for selected ranges
 - license status and activation state handling without user text
 - sidecar status handling
+- `pseudo-cli analyze < input.txt > output.json` returns deterministic findings and replacement groups without launching the UI
 
 Python:
 
@@ -666,6 +716,9 @@ Expected groups:
 ### Phase 1: First-Impression Deterministic MVP
 
 - Create Tauri + React + TypeScript app
+- Create `pseudo-core` as a pure Rust library and keep deterministic detectors, chunking, grouping, overlap resolution, replacement, manual-finding validation, and shared types inside it
+- Create `pseudo-cli` as a thin wrapper around `pseudo-core` for UI-free deterministic analysis and integration tests
+- Add `cargo deny` with permissive-license policy for `pseudo-core`
 - Build a polished first-launch before/after demo layout with a compact trust/status strip: `Local only`, `Nothing saved`, `Basic detection active`, and `Clear`
 - Add preloaded legal-work sample text that opens already analyzed using a bundled verified replacement map
 - Make `Try your own text` the primary first-run action; it clears the sample, focuses the editor, and shows `Paste any text. Nothing leaves this device.`
@@ -710,6 +763,21 @@ Deliverable: practical review workflow that feels controlled, inspectable, and r
 - Add model status UI and post-analysis upgrade prompt only after the user has run deterministic analysis on their own text
 
 Deliverable: local LLM-assisted detection with guided model setup that enhances an already useful app.
+
+### Phase 3.5: Open-Source Readiness Review
+
+Do this after Phase 3 and after the first paying customers validate the product shape. The goal is to make `pseudo-core` publishable without dragging the full desktop product into an open-source support burden too early.
+
+- Decide whether to publish `pseudo-core` and `pseudo-cli` as a separate public repository or public package inside the main repository
+- Use Apache-2.0 unless there is a specific reason to choose another permissive license
+- Add `SECURITY.md` with a vulnerability disclosure policy and contact
+- Add `CONTRIBUTING.md` with a DCO sign-off requirement instead of a CLA
+- Add public CI for format, tests, `cargo deny`, and CLI smoke tests
+- Audit git history and release artifacts for proprietary remnants, license-server details, signing keys, real client fixtures, model credentials, and private infrastructure URLs
+- Keep the model download manager, license client, sidecar packaging, platform installers, auto-update mechanism, frontend UI, and real-client-derived fixtures closed
+- Publish only when there is enough customer or buyer value to justify issue triage, security disclosures, contribution review, and governance overhead
+
+Deliverable: an auditable deterministic engine and CLI that security teams can inspect and run offline, while the commercial desktop product remains closed.
 
 ### Phase 4: Packaging
 
@@ -776,6 +844,16 @@ Mitigation:
 - Keep deterministic/manual functionality available without activation
 - Verify model license and hosted-download rights before public/commercial distribution
 
+### Core Becomes Hard to Open-Source Later
+
+Mitigation:
+
+- Keep deterministic logic in `pseudo-core` from the first implementation pass
+- Keep networking, licensing, model downloads, sidecar IPC, telemetry, updates, and packaging out of `pseudo-core`
+- Enforce permissive dependency licenses with `cargo deny`
+- Use `pseudo-cli` and `pseudo-core` tests as the compatibility contract
+- Avoid real client fixtures and proprietary app details in core tests
+
 ### Replacing Text Naively Can Corrupt Output
 
 Mitigation:
@@ -789,13 +867,16 @@ Mitigation:
 ## 18. Immediate Next Steps
 
 1. Scaffold Tauri + React + TypeScript project.
-2. Build the first-run shell: pre-analyzed legal-work sample, trust/status strip, before/after layout, replacement panel, enabled `Copy result`, `Try your own text`, and clear action.
-3. Implement shared TypeScript types plus bundled sample findings/mock analysis results to perfect highlights, replacement rows, readiness summary, locality proof, copy confirmation, and empty/no-findings/error states.
-4. Implement Rust-side grouping and range-based replacement utilities.
-5. Add deterministic detectors and wire them through a Tauri command.
-6. Replace mock analysis with deterministic backend results and keep source highlights, replacement rows, and pseudonymized preview synchronized.
-7. Add manual selected-text marking.
-8. Add the first-run golden-path test and unit tests for grouping, overlap resolution, manual findings, replacement, and readiness summary state.
-9. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
-10. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis on their own text.
-11. Add the Python sidecar after the deterministic review workflow feels solid.
+2. Create a Rust workspace with `pseudo-core`, `pseudo-cli`, and the Tauri app crate.
+3. Add `cargo deny` with permissive-license policy for `pseudo-core`.
+4. Build the first-run shell: pre-analyzed legal-work sample, trust/status strip, before/after layout, replacement panel, enabled `Copy result`, `Try your own text`, and clear action.
+5. Implement shared TypeScript types in `src/lib/core` plus bundled sample findings/mock analysis results to perfect highlights, replacement rows, readiness summary, locality proof, copy confirmation, and empty/no-findings/error states.
+6. Implement `pseudo-core` grouping and range-based replacement utilities.
+7. Add deterministic detectors in `pseudo-core` and wire them through a Tauri command.
+8. Add `pseudo-cli analyze < input.txt > output.json` for deterministic engine smoke tests.
+9. Replace mock analysis with deterministic backend results and keep source highlights, replacement rows, and pseudonymized preview synchronized.
+10. Add manual selected-text marking.
+11. Add the first-run golden-path test and unit tests for grouping, overlap resolution, manual findings, replacement, dependency license policy, and readiness summary state.
+12. Add review workflow controls: click-to-focus, ignore finding, filters, and reset suggested replacements.
+13. Add optional model setup UI state with placeholder download/status behavior, visible only after the user has seen a successful analysis on their own text.
+14. Add the Python sidecar after the deterministic review workflow feels solid.
