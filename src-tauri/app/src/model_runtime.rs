@@ -14,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::llm_output::parse_llm_response;
+use crate::model_catalog::{active_model, active_model_path};
 
 const CONTEXT_TOKENS: u32 = 8_192;
 const MAX_NEW_TOKENS: i32 = 1_024;
@@ -109,14 +110,7 @@ impl ModelRuntime {
 }
 
 pub fn model_path() -> PathBuf {
-    if let Ok(path) = std::env::var("PSEUDO_MODEL_PATH") {
-        return PathBuf::from(path);
-    }
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("pseudo")
-        .join("models")
-        .join("qwen3-1.7b-q4_k_m.gguf")
+    active_model_path()
 }
 
 impl LoadedModel {
@@ -258,8 +252,10 @@ Return JSON now.\n\
 }
 
 fn status_for(path: Option<PathBuf>, load_ms: Option<u64>) -> ModelStatus {
+    let model = active_model();
     ModelStatus {
         loaded: path.is_some(),
+        model_name: Some(model.name.into()),
         model_path: path.map(|path| path.display().to_string()),
         quantization: Some("Q4_K_M".into()),
         backend: runtime_backend(),
@@ -293,7 +289,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "loads the local Qwen GGUF model"]
+    #[ignore = "loads the configured local GGUF model"]
     fn detects_with_local_model() {
         tauri::async_runtime::block_on(async {
             let runtime = ModelRuntime::default();

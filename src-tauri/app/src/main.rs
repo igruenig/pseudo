@@ -1,6 +1,7 @@
 mod analysis;
 mod commands;
 mod llm_output;
+mod model_catalog;
 mod model_download;
 mod model_runtime;
 

@@ -73,7 +73,7 @@ export async function recomputeAnalysis(
 }
 
 export async function getModelStatus(): Promise<ModelStatus> {
-  if (!isTauri) return { loaded: false, backend: "cpu" };
+  if (!isTauri) return { loaded: false, modelName: "SmolLM3-3B Q4_K_M", backend: "cpu" };
   return invoke("get_model_status");
 }
 
@@ -81,7 +81,7 @@ export async function getModelDownloadStatus(): Promise<ModelDownloadStatus> {
   if (!isTauri) {
     return {
       state: "not_started",
-      modelName: "Qwen3-1.7B Q4_K_M",
+      modelName: "SmolLM3-3B Q4_K_M",
       destinationPath: "app data",
       bytesDownloaded: 0
     };
@@ -93,7 +93,7 @@ export async function startModelDownload(): Promise<ModelDownloadStatus> {
   if (!isTauri) {
     return {
       state: "error",
-      modelName: "Qwen3-1.7B Q4_K_M",
+      modelName: "SmolLM3-3B Q4_K_M",
       destinationPath: "app data",
       bytesDownloaded: 0,
       error: "Model download is available in the desktop app."
@@ -106,7 +106,7 @@ export async function cancelModelDownload(): Promise<ModelDownloadStatus> {
   if (!isTauri) {
     return {
       state: "cancelled",
-      modelName: "Qwen3-1.7B Q4_K_M",
+      modelName: "SmolLM3-3B Q4_K_M",
       destinationPath: "app data",
       bytesDownloaded: 0
     };

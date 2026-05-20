@@ -1,6 +1,7 @@
 use pseudo_core::{
-    apply_replacements as apply_core_replacements, create_manual_finding as create_core_manual_finding,
-    AnalysisResult, Finding, ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType,
+    apply_replacements as apply_core_replacements,
+    create_manual_finding as create_core_manual_finding, AnalysisResult, Finding,
+    ModelDownloadStatus, ModelStatus, ReplacementGroup, SensitiveType,
 };
 use tauri::State;
 use tokio::sync::Mutex;

@@ -19,7 +19,12 @@ pub struct LlmResponse {
 pub struct LlmFinding {
     #[serde(default, alias = "chunkIndex", alias = "chunk")]
     pub chunk_index: usize,
-    #[serde(alias = "entity", alias = "surface", alias = "surfaceForm", alias = "value")]
+    #[serde(
+        alias = "entity",
+        alias = "surface",
+        alias = "surfaceForm",
+        alias = "value"
+    )]
     pub text: String,
     #[serde(alias = "label", alias = "kind", alias = "category")]
     #[serde(deserialize_with = "deserialize_sensitive_type")]
@@ -90,8 +95,12 @@ pub fn response_grammar() -> Result<String, String> {
     llama_cpp_2::json_schema_to_grammar(response_schema_json()).map_err(|error| error.to_string())
 }
 
-pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Finding>, Vec<String>), String> {
-    let json = extract_json_object(json).ok_or_else(|| "LLM did not return a JSON object".to_string())?;
+pub fn parse_llm_response(
+    json: &str,
+    chunks: &[TextChunk],
+) -> Result<(Vec<Finding>, Vec<String>), String> {
+    let json =
+        extract_json_object(json).ok_or_else(|| "LLM did not return a JSON object".to_string())?;
     let envelope: LlmEnvelope = serde_json::from_str(json).map_err(|error| error.to_string())?;
     let response = match envelope {
         LlmEnvelope::Schema(response) => response,
@@ -113,8 +122,14 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
     let mut warnings = response.warnings;
 
     for item in response.findings {
-        let Some(chunk) = chunks.iter().find(|chunk| chunk.chunk_index == item.chunk_index) else {
-            warnings.push(format!("LLM returned unknown chunk index {}", item.chunk_index));
+        let Some(chunk) = chunks
+            .iter()
+            .find(|chunk| chunk.chunk_index == item.chunk_index)
+        else {
+            warnings.push(format!(
+                "LLM returned unknown chunk index {}",
+                item.chunk_index
+            ));
             continue;
         };
         if item.text.trim().is_empty() {
@@ -122,7 +137,10 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
             continue;
         }
         if should_discard_likely_generic(&item) {
-            warnings.push(format!("Discarded `{}`: likely generic, non-identifying text", item.text));
+            warnings.push(format!(
+                "Discarded `{}`: likely generic, non-identifying text",
+                item.text
+            ));
             continue;
         }
         let mut matched = false;
@@ -137,11 +155,15 @@ pub fn parse_llm_response(json: &str, chunks: &[TextChunk]) -> Result<(Vec<Findi
                 text: item.text.clone(),
                 source: FindingSource::Llm,
                 confidence: Some(confidence),
-                needs_review: Some(confidence < 0.70 || item.r#type == SensitiveType::OtherSensitive),
+                needs_review: Some(
+                    confidence < 0.70 || item.r#type == SensitiveType::OtherSensitive,
+                ),
             });
         }
         if !matched {
-            let reason = item.reason.unwrap_or_else(|| "surface form not found in source chunk".into());
+            let reason = item
+                .reason
+                .unwrap_or_else(|| "surface form not found in source chunk".into());
             warnings.push(format!("Discarded `{}`: {}", item.text, reason));
         }
     }
@@ -159,7 +181,11 @@ fn should_discard_likely_generic(item: &LlmFinding) -> bool {
         && text
             .chars()
             .all(|character| character.is_ascii_digit() || matches!(character, '.' | ',' | ' '))
-        && text.chars().filter(|character| character.is_ascii_digit()).count() <= 2
+        && text
+            .chars()
+            .filter(|character| character.is_ascii_digit())
+            .count()
+            <= 2
     {
         return true;
     }
@@ -225,7 +251,10 @@ where
 }
 
 fn surface_matches(haystack: &str, needle: &str) -> Vec<usize> {
-    let exact = haystack.match_indices(needle).map(|(start, _)| start).collect::<Vec<_>>();
+    let exact = haystack
+        .match_indices(needle)
+        .map(|(start, _)| start)
+        .collect::<Vec<_>>();
     if !exact.is_empty() {
         return exact;
     }
@@ -352,7 +381,8 @@ done"#;
 
     #[test]
     fn discards_generic_single_word_other_sensitive_and_ordinal_dates() {
-        let source = "In Cannes laufen die 79. Internationalen Filmfestspiele. Vincent Bolloré sprach.";
+        let source =
+            "In Cannes laufen die 79. Internationalen Filmfestspiele. Vincent Bolloré sprach.";
         let chunks = vec![TextChunk {
             chunk_index: 0,
             start: 0,

@@ -30,7 +30,8 @@ pub fn chunk_text_for_analysis(text: &str, max_chars: usize) -> Vec<TextChunk> {
 }
 
 fn next_boundary(text: &str, start: usize, max_chars: usize) -> usize {
-    let hard_end = text.char_indices()
+    let hard_end = text
+        .char_indices()
         .map(|(idx, _)| idx)
         .filter(|idx| *idx > start)
         .nth(max_chars)

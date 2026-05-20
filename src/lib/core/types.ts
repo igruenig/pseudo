@@ -45,6 +45,7 @@ export type AnalysisResult = {
 
 export type ModelStatus = {
   loaded: boolean;
+  modelName?: string;
   modelPath?: string;
   quantization?: string;
   backend: "metal" | "cpu";

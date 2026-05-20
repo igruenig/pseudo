@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::types::{Finding, ReplacementGroup};
 
 pub fn apply_replacements(text: &str, findings: &[Finding], groups: &[ReplacementGroup]) -> String {
-    let by_id: HashMap<&str, &Finding> = findings.iter().map(|finding| (finding.id.as_str(), finding)).collect();
+    let by_id: HashMap<&str, &Finding> = findings
+        .iter()
+        .map(|finding| (finding.id.as_str(), finding))
+        .collect();
     let mut ranges = Vec::new();
     for group in groups.iter().filter(|group| group.enabled) {
         for finding_id in &group.finding_ids {
@@ -58,6 +61,9 @@ mod tests {
             },
         ];
         let groups = build_groups(&findings);
-        assert_eq!(apply_replacements(text, &findings, &groups), "[PERSON_1] emailed [EMAIL_1].");
+        assert_eq!(
+            apply_replacements(text, &findings, &groups),
+            "[PERSON_1] emailed [EMAIL_1]."
+        );
     }
 }

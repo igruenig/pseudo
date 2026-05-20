@@ -33,7 +33,7 @@ export default function App() {
   const [groups, setGroups] = useState<ReplacementGroup[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modelStatus, setModelStatus] = useState<ModelStatus>({ loaded: false, backend: "cpu" });
+  const [modelStatus, setModelStatus] = useState<ModelStatus>({ loaded: false, modelName: "SmolLM3-3B Q4_K_M", backend: "cpu" });
   const [downloadStatus, setDownloadStatus] = useState<ModelDownloadStatus | null>(null);
   const [copied, setCopied] = useState(false);
   const [manualType, setManualType] = useState<SensitiveType>("PERSON_NAME");

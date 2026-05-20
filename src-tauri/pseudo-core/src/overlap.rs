@@ -5,7 +5,10 @@ pub fn resolve_overlaps(mut findings: Vec<Finding>) -> Vec<Finding> {
     let mut accepted: Vec<Finding> = Vec::new();
 
     'candidate: for candidate in findings {
-        if accepted.iter().any(|existing| overlaps(existing, &candidate)) {
+        if accepted
+            .iter()
+            .any(|existing| overlaps(existing, &candidate))
+        {
             continue 'candidate;
         }
         accepted.push(candidate);

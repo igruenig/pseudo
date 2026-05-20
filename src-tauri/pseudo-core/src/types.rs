@@ -63,6 +63,7 @@ pub struct AnalysisResult {
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
     pub loaded: bool,
+    pub model_name: Option<String>,
     pub model_path: Option<String>,
     pub quantization: Option<String>,
     pub backend: ModelBackend,

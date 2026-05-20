@@ -8,11 +8,7 @@ use pseudo_core::{ModelDownloadState, ModelDownloadStatus};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::model_runtime::model_path;
-
-const MODEL_NAME: &str = "Qwen3-1.7B Q4_K_M";
-const MODEL_URL: &str = "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf";
-const EXPECTED_BYTES: u64 = 1_282_439_264;
+use crate::model_catalog::{active_model, active_model_path, ModelSpec};
 
 #[derive(Default)]
 pub struct ModelDownloader {
@@ -25,7 +21,8 @@ impl ModelDownloader {
         if let Some(status) = self.status.lock().await.clone() {
             return status;
         }
-        let destination = model_path();
+        let model = active_model();
+        let destination = active_model_path();
         let state = if destination.exists() {
             ModelDownloadState::Complete
         } else {
@@ -33,7 +30,7 @@ impl ModelDownloader {
         };
         ModelDownloadStatus {
             state,
-            model_name: MODEL_NAME.into(),
+            model_name: model.name.into(),
             destination_path: destination.display().to_string(),
             bytes_downloaded: 0,
             total_bytes: None,
@@ -42,9 +39,10 @@ impl ModelDownloader {
     }
 
     pub async fn start(&self) -> ModelDownloadStatus {
-        let destination = model_path();
+        let model = active_model();
+        let destination = active_model_path();
         if destination.exists() {
-            let status = complete_status(destination);
+            let status = complete_status(model, destination);
             *self.status.lock().await = Some(status.clone());
             return status;
         }
@@ -64,10 +62,10 @@ impl ModelDownloader {
 
         let status = ModelDownloadStatus {
             state: ModelDownloadState::Downloading,
-            model_name: MODEL_NAME.into(),
+            model_name: model.name.into(),
             destination_path: destination.display().to_string(),
             bytes_downloaded: 0,
-            total_bytes: Some(EXPECTED_BYTES),
+            total_bytes: Some(model.expected_bytes),
             error: None,
         };
         self.cancel_requested.store(false, Ordering::Relaxed);
@@ -76,7 +74,7 @@ impl ModelDownloader {
         let status_handle = Arc::clone(&self.status);
         let cancel_handle = Arc::clone(&self.cancel_requested);
         tokio::spawn(async move {
-            download_model(destination, status_handle, cancel_handle).await;
+            download_model(model, destination, status_handle, cancel_handle).await;
         });
 
         status
@@ -100,27 +98,33 @@ impl ModelDownloader {
 }
 
 async fn download_model(
+    model: ModelSpec,
     destination: std::path::PathBuf,
     status_handle: Arc<Mutex<Option<ModelDownloadStatus>>>,
     cancel_requested: Arc<AtomicBool>,
 ) {
     let mut status = ModelDownloadStatus {
         state: ModelDownloadState::Downloading,
-        model_name: MODEL_NAME.into(),
+        model_name: model.name.into(),
         destination_path: destination.display().to_string(),
         bytes_downloaded: 0,
-        total_bytes: Some(EXPECTED_BYTES),
+        total_bytes: Some(model.expected_bytes),
         error: None,
     };
 
     let result = async {
         let temp = destination.with_extension("download");
-        let response = reqwest::get(MODEL_URL).await.map_err(|error| error.to_string())?;
+        let response = reqwest::get(model.url)
+            .await
+            .map_err(|error| error.to_string())?;
         if !response.status().is_success() {
-            return Err(format!("model download failed with HTTP {}", response.status()));
+            return Err(format!(
+                "model download failed with HTTP {}",
+                response.status()
+            ));
         }
 
-        let total = response.content_length().or(Some(EXPECTED_BYTES));
+        let total = response.content_length().or(Some(model.expected_bytes));
         status.total_bytes = total;
         *status_handle.lock().await = Some(status.clone());
 
@@ -144,11 +148,11 @@ async fn download_model(
         }
         file.flush().await.map_err(|error| error.to_string())?;
 
-        if status.bytes_downloaded != EXPECTED_BYTES {
+        if status.bytes_downloaded != model.expected_bytes {
             let _ = tokio::fs::remove_file(&temp).await;
             return Err(format!(
                 "downloaded file size was {}, expected {}",
-                status.bytes_downloaded, EXPECTED_BYTES
+                status.bytes_downloaded, model.expected_bytes
             ));
         }
         tokio::fs::rename(&temp, &destination)
@@ -168,13 +172,13 @@ async fn download_model(
     }
 }
 
-fn complete_status(destination: std::path::PathBuf) -> ModelDownloadStatus {
+fn complete_status(model: ModelSpec, destination: std::path::PathBuf) -> ModelDownloadStatus {
     ModelDownloadStatus {
         state: ModelDownloadState::Complete,
-        model_name: MODEL_NAME.into(),
+        model_name: model.name.into(),
         destination_path: destination.display().to_string(),
-        bytes_downloaded: EXPECTED_BYTES,
-        total_bytes: Some(EXPECTED_BYTES),
+        bytes_downloaded: model.expected_bytes,
+        total_bytes: Some(model.expected_bytes),
         error: None,
     }
 }

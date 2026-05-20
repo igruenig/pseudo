@@ -43,7 +43,8 @@ mod tests {
 
     #[test]
     fn detects_email_and_url_only() {
-        let findings = detect_deterministic("Email jane@example.com and see https://example.com/case.");
+        let findings =
+            detect_deterministic("Email jane@example.com and see https://example.com/case.");
         assert_eq!(findings.len(), 2);
         assert!(findings.iter().any(|f| f.r#type == SensitiveType::Email));
         assert!(findings.iter().any(|f| f.r#type == SensitiveType::Url));

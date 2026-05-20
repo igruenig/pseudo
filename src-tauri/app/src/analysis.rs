@@ -1,5 +1,6 @@
 use pseudo_core::{
-    apply_replacements, build_groups, detect_deterministic, resolve_overlaps, AnalysisResult, Finding,
+    apply_replacements, build_groups, detect_deterministic, resolve_overlaps, AnalysisResult,
+    Finding,
 };
 use sha2::{Digest, Sha256};
 
@@ -26,7 +27,12 @@ pub async fn analyze(request_id: String, text: String, runtime: &ModelRuntime) -
     finish(request_id, text, findings, Vec::new())
 }
 
-pub fn recompute(request_id: String, text: String, findings: Vec<Finding>, warnings: Vec<String>) -> AnalysisResult {
+pub fn recompute(
+    request_id: String,
+    text: String,
+    findings: Vec<Finding>,
+    warnings: Vec<String>,
+) -> AnalysisResult {
     finish(request_id, text, resolve_overlaps(findings), warnings)
 }
 
@@ -34,7 +40,12 @@ pub fn hash_text(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-fn finish(request_id: String, text: String, findings: Vec<Finding>, warnings: Vec<String>) -> AnalysisResult {
+fn finish(
+    request_id: String,
+    text: String,
+    findings: Vec<Finding>,
+    warnings: Vec<String>,
+) -> AnalysisResult {
     let groups = build_groups(&findings);
     AnalysisResult {
         request_id,
