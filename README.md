@@ -193,6 +193,20 @@ Common outputs include `.msi` and/or `.exe` installers, depending on the Tauri b
 If the build fails with:
 
 ```text
+icons/icon.ico not found; required for generating a Windows Resource file during tauri-build
+```
+
+the Tauri icon set is missing. Regenerate it from the source icon:
+
+```powershell
+npm run tauri -- icon icons/icon.png
+```
+
+Run that command from the repository root. The wrapper runs Tauri from `src-tauri/app`, so `icons/icon.png` is the correct path.
+
+If the build fails with:
+
+```text
 failed to run custom build command for `llama-cpp-sys-2`
 ```
 
